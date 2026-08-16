@@ -30,6 +30,8 @@ export function loadGame(): GameState | null {
     state.pricingHistory ??= [];
     for (const a of state.adventurers) a.browsingItemId ??= null;
     for (const o of state.recentOutcomes) o.goldFound ??= 0;
+    state.autoPilotEnabled ??= false;
+    state.offlineSummary ??= null;
     state.speed = 1; // never resume paused or fast-forwarded
     state.view = "town";
     return state;

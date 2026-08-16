@@ -8,6 +8,7 @@ import { generateName } from "../utils/names";
 import { loadBudget } from "../utils/TokenBudget";
 import { makeItem, startingInventory } from "../entities/Item";
 import { loadGame, saveGame } from "./GameStatePersistence";
+import { elapsedOfflineDays, runOfflineSim } from "./OfflineSim";
 import { makeDecision, type MorningPlanDecision } from "../entities/AdventurerAI";
 import {
   TOWN,
@@ -39,7 +40,13 @@ export class GameEngine {
   constructor(resume = true) {
     // Continue from an existing save when one exists (spec §12); pass
     // resume=false for an explicit New Game.
-    this.state = (resume ? loadGame() : null) ?? createInitialState();
+    const loaded = resume ? loadGame() : null;
+    this.state = loaded ?? createInitialState();
+    if (loaded) {
+      // The world kept turning while the tab was closed (§13).
+      const days = elapsedOfflineDays(loaded.lastSavedAt, Date.now());
+      if (days > 0) runOfflineSim(this, days);
+    }
   }
 
   /** Advance the simulation by a real-time delta (ms). */
@@ -351,6 +358,8 @@ function createInitialState(): GameState {
     recentOutcomes: [],
     merchant: null,
     pricingHistory: [],
+    autoPilotEnabled: false,
+    offlineSummary: null,
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
