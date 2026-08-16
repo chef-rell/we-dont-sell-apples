@@ -27,6 +27,7 @@ import {
 import {
   DEFAULT_DAILY_LIMIT_CALLS,
   DEFAULT_DAILY_LIMIT_TOKENS,
+  EXPANSION_COSTS,
   MIN_ADVENTURER_COUNT,
   REPLACEMENT_DAYS_MAX,
   REPLACEMENT_DAYS_MIN,
@@ -192,6 +193,35 @@ export class GameEngine {
       });
       if (s.pricingHistory.length > 500) s.pricingHistory.splice(0, s.pricingHistory.length - 500);
     }
+    return true;
+  }
+
+  /** Cost of the next shop expansion, or null at max level (§5). */
+  nextExpansionCost(): number | null {
+    return EXPANSION_COSTS[this.state.shopLevel - 1] ?? null;
+  }
+
+  /** Expand the shop one tier (§5): 300/600/1200g for levels 2-4. Adds shelf
+   *  slots and moves stockroom overflow onto the new space. */
+  expandShop(): boolean {
+    const s = this.state;
+    const cost = this.nextExpansionCost();
+    if (cost === null || s.gold < cost) return false;
+    s.gold -= cost;
+    s.shopLevel += 1;
+    const slots = SHOP_SLOTS_BY_LEVEL[s.shopLevel - 1];
+    while (s.shelves.length < slots) {
+      s.shelves.push(s.inventory.shift() ?? null);
+    }
+    this.pushMessage({
+      id: `sys-expand-${s.day}-${s.shopLevel}`,
+      senderId: "system",
+      senderName: "Town",
+      type: "system",
+      content: `The shop has expanded! Now ${slots} display slots.`,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
     return true;
   }
 
