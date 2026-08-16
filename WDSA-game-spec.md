@@ -1162,3 +1162,11 @@ made for a reason; revisit freely at the playtest gate.
   (cautious) > random.
 - **Economy**: wilderness gold faucet (monster HP-scaled drops) added after the
   balance harness showed a fixed money supply stalls all sales.
+
+### §22 final status — 2026-08-16
+
+v1 + v1.5 feature-complete and soak-tested. 43 PRs merged, 44 tests. All eight
+phases built across both domains; deployed deterministic-only at
+https://web-production-b5454b.up.railway.app. Next milestone: owner playtest →
+balance tuning (`src/utils/constants.ts` + `scripts/balance-report.ts`).
+Handoff docs: `README.md` (humans), `CLAUDE.md` (agents).
