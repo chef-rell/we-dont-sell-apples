@@ -37,31 +37,15 @@ import {
 } from "../utils/constants";
 import { defaultBuildings, getBuilding } from "../utils/TownBuildings";
 
-// Town geometry now lives on GameState.buildings (spec V2.8, issue #56).
-// This module-level registry backs the two spots below that need landmark
+// Town geometry lives on GameState.buildings (spec V2.8, issue #56). This
+// module-level registry backs the two spots below that need landmark
 // coordinates before any GameState exists yet (initial/replacement spawns).
+// The legacy TOWN shim that used to live here for TownView.tsx's rendering
+// is gone — Phase 1's iso TownView reads GameState.buildings directly
+// (spec V2.15 note 2, issue #70).
 const REGISTRY = defaultBuildings();
-const shopB = getBuilding(REGISTRY, "shop")!;
-const tavernB = getBuilding(REGISTRY, "tavern")!;
 const gateB = getBuilding(REGISTRY, "gate")!;
 const squareB = getBuilding(REGISTRY, "square")!;
-const houseBs = REGISTRY.filter((b) => b.kind === "house");
-
-// Legacy shape kept ONLY for TownView.tsx's rendering, which is out of
-// scope for #56 (a parallel PR is mid-flight on character rendering
-// there). Everything below reads straight off the registry except `shop`:
-// the shop's registry footprint deliberately carries click-test slack
-// (see TownBuildings.ts), not its true wall position, so that one point is
-// kept as the original literal instead of being derived.
-export const TOWN = {
-  shop: { x: 120, y: 140 },
-  shopDoor: shopB.door!,
-  tavern: { x: tavernB.footprint.x, y: tavernB.footprint.y },
-  tavernDoor: tavernB.door!,
-  houses: houseBs.map((b) => ({ x: b.footprint.x, y: b.footprint.y })),
-  gate: gateB.door!,
-  square: { x: squareB.footprint.x, y: squareB.footprint.y },
-} as const;
 
 const MAX_MESSAGES = 100;
 
