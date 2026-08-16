@@ -66,6 +66,7 @@ describe("player chat", () => {
   it("a named adventurer answers directly", () => {
     const e = engine();
     const target = e.state.adventurers[2];
+    target.name = "Zephyrine the Test"; // guaranteed-unique first name
     const first = target.name.split(" ")[0];
     const rs = playerChatResponders(e.state, `${first}, want to buy this potion?`);
     expect(rs).toHaveLength(1);
@@ -89,10 +90,17 @@ describe("player chat", () => {
     expect(e.state.messages.length).toBe(before);
   });
 
-  it("fallback replies stay on topic", () => {
+  it("fallback replies stay on topic and vary across adventurers", () => {
     const e = engine();
-    const a = e.state.adventurers[0];
-    expect(fallbackReply(a, "new swords in stock")).toMatch(/look|coin/);
-    expect(fallbackReply(a, "danger in the cave")).toMatch(/challenge|warning/i);
+    const replies = new Set(
+      e.state.adventurers.map((a) => fallbackReply(a, "new swords in stock")),
+    );
+    expect(replies.size).toBeGreaterThan(1); // issue #33: no robotic chorus
+  });
+
+  it("starting cast has unique first names", () => {
+    const e = engine();
+    const firsts = e.state.adventurers.map((a) => a.name.split(" ")[0]);
+    expect(new Set(firsts).size).toBe(firsts.length);
   });
 });

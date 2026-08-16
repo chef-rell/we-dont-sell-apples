@@ -4,7 +4,7 @@
 
 import type { Adventurer, AdventurerClass, AdventureOutcome, GameState } from "../types";
 import { advanceTime, phaseFor } from "./DayNightCycle";
-import { generateName } from "../utils/names";
+import { generateUniqueName } from "../utils/names";
 import { loadBudget } from "../utils/TokenBudget";
 import { makeItem, startingInventory } from "../entities/Item";
 import { loadGame, saveGame } from "./GameStatePersistence";
@@ -154,7 +154,7 @@ export class GameEngine {
     const due = this.replacementDueDay !== null && s.day >= this.replacementDueDay;
     if ((due || aliveCount < MIN_ADVENTURER_COUNT) && aliveCount < STARTING_ADVENTURER_COUNT) {
       this.replacementDueDay = null;
-      const newcomer = createReplacementAdventurer();
+      const newcomer = createReplacementAdventurer(s.adventurers.map((x) => x.name));
       s.adventurers.push(newcomer);
       this.pushMessage({
         id: `sys-arrival-${s.day}`,
@@ -448,9 +448,9 @@ const STARTING_CAST: Array<{
 ];
 
 /** A newcomer drawn from the cast templates with fresh identity and no history. */
-function createReplacementAdventurer(): Adventurer {
+function createReplacementAdventurer(taken: string[]): Adventurer {
   const c = STARTING_CAST[Math.floor(Math.random() * STARTING_CAST.length)];
-  const [a] = buildAdventurers([c], TOWN.gate.x - 40, TOWN.gate.y + 30);
+  const [a] = buildAdventurers([c], TOWN.gate.x - 40, TOWN.gate.y + 30, taken);
   return a;
 }
 
@@ -459,6 +459,7 @@ function createStartingAdventurers(): Adventurer[] {
     STARTING_CAST.slice(0, STARTING_ADVENTURER_COUNT),
     TOWN.square.x - 100,
     TOWN.square.y - 20,
+    [],
   );
 }
 
@@ -466,10 +467,16 @@ function buildAdventurers(
   cast: typeof STARTING_CAST,
   originX: number,
   originY: number,
+  takenNames: string[] = [],
 ): Adventurer[] {
+  const names = [...takenNames];
   return cast.map((c, i) => ({
     id: crypto.randomUUID(),
-    name: generateName(),
+    name: (() => {
+      const n = generateUniqueName(names);
+      names.push(n);
+      return n;
+    })(),
     class: c.cls,
     level: 1 + Math.floor(Math.random() * 2),
     gold: c.gold,
