@@ -10,6 +10,7 @@ import { makeItem, startingInventory } from "../entities/Item";
 import { loadGame, saveGame } from "./GameStatePersistence";
 import { elapsedOfflineDays, runOfflineSim } from "./OfflineSim";
 import { arrivalBonus, processDayEnd } from "./MoraleSystem";
+import { freshLedger, recordDonation, recordLootBuy, recordRestock, rotateLedger } from "./Ledger";
 import {
   fallbackReply,
   freshChatterState,
@@ -135,6 +136,7 @@ export class GameEngine {
 
   private onNewDay(): void {
     const s = this.state;
+    rotateLedger(s, s.day); // close yesterday's book before anything else
     saveGame(s); // auto-save at the day rollover (§12)
     // Loot offers don't survive the night.
     s.lootOffers = s.lootOffers.filter((o) => o.day >= s.day);
@@ -167,6 +169,7 @@ export class GameEngine {
         const empty = s.shelves.findIndex((slot) => slot === null);
         if (empty !== -1) s.shelves[empty] = item;
         else s.inventory.push(item);
+        recordDonation(s);
         this.pushMessage({
           id: `sys-charity-${s.day}`,
           senderId: donor.id,
@@ -265,6 +268,7 @@ export class GameEngine {
     if (s.gold < item.baseValue) return false;
 
     s.gold -= item.baseValue;
+    recordRestock(s, item.baseValue);
     s.merchant.stock.splice(idx, 1);
     const empty = s.shelves.findIndex((slot) => slot === null);
     if (empty !== -1) s.shelves[empty] = item;
@@ -369,9 +373,16 @@ export class GameEngine {
     if (!seller) return false;
 
     s.gold -= offer.askPrice;
+    recordLootBuy(s, offer.askPrice);
     seller.gold += offer.askPrice;
     seller.inventory = seller.inventory.filter((it) => it.id !== offer.item.id);
-    s.inventory.push({ ...offer.item, salePrice: null });
+    // Onto an empty shelf when there is one (playtest finding: the stockroom
+    // has no UI yet — issue #46 — so shelved loot is loot the player can
+    // actually see, price, and resell).
+    const bought = { ...offer.item, salePrice: null };
+    const emptySlot = s.shelves.findIndex((slot) => slot === null);
+    if (emptySlot !== -1) s.shelves[emptySlot] = bought;
+    else s.inventory.push(bought);
     seller.morale = Math.min(100, seller.morale + 4);
     seller.relationships.shopkeeper = Math.min(100, seller.relationships.shopkeeper + 2);
     s.lootOffers.splice(idx, 1);
@@ -484,6 +495,8 @@ function createInitialState(): GameState {
     recentOutcomes: [],
     merchant: null,
     pricingHistory: [],
+    ledger: freshLedger(1),
+    ledgerHistory: [],
     autoPilotEnabled: false,
     offlineSummary: null,
     tokenBudget: {

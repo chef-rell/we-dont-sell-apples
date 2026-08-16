@@ -5,6 +5,7 @@
 
 import type { Adventurer, AdventureOutcome, ChatMessage, GameState, Item } from "../types";
 import { computeReaction, decidesToBuy, classifyPrice, equippedQuality } from "../game/Economy";
+import { recordReactionSeen, recordSale, recordWalkout } from "../game/Ledger";
 import { resolveAdventure, fallbackAskPrice } from "../game/Combat";
 import { makeItem } from "./Item";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
@@ -174,6 +175,7 @@ export function stepAdventurer(
     case "browsing": {
       if (bc.timer > 0) break;
       const item = s.shelves.find((it) => it?.id === bc.browsingItem) ?? null;
+      if (item && item.salePrice !== null) recordReactionSeen(s, computeReaction(a, item));
       if (item && decidesToBuy(a, item)) {
         a.state = "buying";
         bc.timer = 2.5;
@@ -400,6 +402,7 @@ function completePurchase(
   const price = item.salePrice!;
   a.gold -= price;
   s.gold += price;
+  recordSale(s, item, price);
   s.stats.totalGoldEarned += price;
   s.stats.itemsSold += 1;
   s.shelves[shelfIdx] = null;
@@ -436,6 +439,7 @@ function completePurchase(
 function recordReaction(a: Adventurer, item: Item, out: StepResult, s: GameState): void {
   const r = computeReaction(a, item);
   if (r === "angry") {
+    recordWalkout(s);
     a.relationships.shopkeeper = Math.max(-100, a.relationships.shopkeeper - 2);
     a.morale = Math.max(0, a.morale - 2); // being priced out is demoralizing (§14)
     out.messages.push(systemMsg(s, `${a.name} scoffed at the price of ${item.name} and walked out.`));

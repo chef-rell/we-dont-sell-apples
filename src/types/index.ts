@@ -191,6 +191,23 @@ export interface OfflineSummary {
   notableEvents: string[]; // human-readable lines
 }
 
+// ---------- Trade ledger (playtest feature: learn-from-stats, §17-safe) ----------
+
+/** One day's trading record. Everything here is information the player could
+ *  observe themselves (restock cost IS the wholesale price they pay), so it
+ *  teaches without leaking hidden adventurer valuations. */
+export interface DayLedger {
+  day: number;
+  revenue: number; // gold taken in from sales
+  salesCount: number;
+  soldAtLoss: number; // sales below what restocking that item costs
+  reactions: { happy: number; neutral: number; unhappy: number; angry: number };
+  walkouts: number; // angry customers who left over a price
+  restockSpend: number;
+  lootSpend: number;
+  donationsReceived: number;
+}
+
 // ---------- Chat (message bus from day one; spec §16) ----------
 
 export type ChatMessageType =
@@ -251,6 +268,8 @@ export interface GameState {
   messages: ChatMessage[];
   lootOffers: LootOffer[]; // pending buy-from-adventurer offers (spec §3b/§8)
   recentOutcomes: AdventureOutcome[]; // last few adventures, for wilderness view + summaries
+  ledger: DayLedger; // today's running trade ledger
+  ledgerHistory: DayLedger[]; // previous days, most recent last (capped)
   merchant: MerchantState | null; // wholesale supplier; non-null during afternoons
   pricingHistory: PriceRecord[]; // player price-setting log (auto-pilot learns from this)
   autoPilotEnabled: boolean; // player toggle (§13); offline sim uses it regardless

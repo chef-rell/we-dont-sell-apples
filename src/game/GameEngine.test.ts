@@ -227,3 +227,43 @@ describe("stalemate rescue", () => {
     expect(e.state.speed).toBe(0);
   });
 });
+
+describe("trade ledger", () => {
+  it("records sales, loss flags, reactions, and rotates at day end", () => {
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    // Price half at a loss, half fairly.
+    e.state.shelves.forEach((it, i) => {
+      if (it) e.setPrice(it.id, i % 2 === 0 ? Math.max(1, it.baseValue - 5) : Math.round(it.baseValue * 1.2));
+    });
+    for (let i = 0; i < 600 * 10 + 50; i++) e.tick(100);
+    const yesterday = e.state.ledgerHistory.at(-1)!;
+    expect(yesterday.salesCount).toBeGreaterThan(0);
+    expect(yesterday.soldAtLoss).toBeGreaterThan(0); // loss sales detected
+    const r = yesterday.reactions;
+    expect(r.happy + r.neutral + r.unhappy + r.angry).toBeGreaterThan(0);
+    expect(e.state.ledger.day).toBe(e.state.day); // fresh book for the new day
+    expect(e.state.ledger.salesCount).toBeLessThanOrEqual(yesterday.salesCount + 5);
+  });
+
+  it("bought loot lands on an empty shelf so the player can see and price it", async () => {
+    const { makeItem } = await import("../entities/Item");
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    e.state.shelves[0] = null; // make room
+    const seller = e.state.adventurers[0];
+    const loot = makeItem("echo_crystal");
+    seller.inventory.push(loot);
+    e.state.lootOffers.push({
+      id: "offer-test",
+      adventurerId: seller.id,
+      adventurerName: seller.name,
+      item: loot,
+      askPrice: 20,
+      day: e.state.day,
+    });
+    expect(e.acceptLootOffer("offer-test")).toBe(true);
+    expect(e.state.shelves[0]?.name).toBe("Echo Crystal");
+    expect(e.state.shelves[0]?.salePrice).toBeNull(); // unpriced, ready to price
+  });
+});

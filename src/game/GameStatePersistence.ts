@@ -4,6 +4,7 @@
 // resume their day from the state machine's defaults on load.
 
 import type { GameState } from "../types";
+import { freshLedger } from "./Ledger";
 
 const SAVE_KEY = "wdsa_save_v1";
 
@@ -35,6 +36,8 @@ export function loadGame(): GameState | null {
     for (const o of state.recentOutcomes) o.goldFound ??= 0;
     state.autoPilotEnabled ??= false;
     state.offlineSummary ??= null;
+    state.ledger ??= freshLedger(state.day);
+    state.ledgerHistory ??= [];
     state.speed = 1; // never resume paused or fast-forwarded
     state.view = "town";
     return state;
