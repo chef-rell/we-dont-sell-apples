@@ -7,7 +7,10 @@ import type { GameState } from "../types";
 import { freshLedger } from "./Ledger";
 import { defaultBuildings } from "../utils/TownBuildings";
 
-const SAVE_KEY = "wdsa_save_v1";
+// v2 fresh-start policy (spec V2.1 decision 4, V2.11): v2 reads and writes
+// ONLY this key. The old `wdsa_save_v1` key is never read, migrated, or
+// deleted — pivoting back to the v1.5-playtest tag finds it intact.
+export const SAVE_KEY = "wdsa_save_v2";
 
 export function saveGame(state: GameState): void {
   try {
@@ -26,7 +29,7 @@ export function loadGame(): GameState | null {
     // Minimal sanity check — a corrupt save is worse than a fresh start.
     if (typeof state.day !== "number" || !Array.isArray(state.adventurers)) return null;
     // Forward-compat: fields added after a save was written get defaults.
-    state.saveVersion ??= 1;
+    state.saveVersion ??= 2;
     state.reputation ??= 0;
     state.buildings ??= defaultBuildings(); // registry added in #56; old saves get today's fixed geometry
     state.lootOffers ??= [];

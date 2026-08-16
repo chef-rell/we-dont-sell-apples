@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GameEngine } from "./GameEngine";
 import { inferProfile, autoPrice, describeProfile } from "./AutoPilot";
 import { elapsedOfflineDays, runOfflineSim, MAX_OFFLINE_DAYS } from "./OfflineSim";
-import { saveGame } from "./GameStatePersistence";
+import { saveGame, SAVE_KEY } from "./GameStatePersistence";
 import type { PriceRecord } from "../types";
 
 const store = new Map<string, string>();
@@ -118,9 +118,9 @@ describe("runOfflineSim", () => {
     e.state.lastSavedAt = null;
     saveGame(e.state); // stamps lastSavedAt = now
     // Rewind the stamp 35 real minutes → 3 offline days.
-    const raw = JSON.parse(store.get("wdsa_save_v1")!);
+    const raw = JSON.parse(store.get(SAVE_KEY)!);
     raw.lastSavedAt = Date.now() - 35 * 60_000;
-    store.set("wdsa_save_v1", JSON.stringify(raw));
+    store.set(SAVE_KEY, JSON.stringify(raw));
 
     const resumed = new GameEngine(true);
     expect(resumed.state.offlineSummary).not.toBeNull();
