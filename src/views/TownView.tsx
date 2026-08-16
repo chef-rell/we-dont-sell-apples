@@ -142,7 +142,7 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
   const alive = s.adventurers.filter((a) => a.alive && IN_TOWN.includes(a.state));
   alive.sort((a, b) => a.position.y - b.position.y);
   for (const a of alive) {
-    drawCharacter(ctx, a, a.position.x, a.position.y, a.position.moving ? walkFrame : 0);
+    drawCharacter(ctx, a, a.position.x, a.position.y, a.position.moving ? walkFrame : 0, a.position.facing);
     // Name tag
     ctx.fillStyle = PALETTE.textLight;
     ctx.font = `${2.5 * PX}px monospace`;

@@ -261,10 +261,13 @@ function drawFight(
   y: number,
   now: number,
 ) {
-  // Adventurer, mid-stride so they read as moving through the area.
+  // Adventurer, mid-stride so they read as moving through the area. This is
+  // a staged tableau, not live movement, so facing isn't a.position.facing
+  // (that's stale from their last town walk) — the monster is always drawn
+  // to their right (mx = x + 76 below), so "right" is their real facing here.
   const frame: 0 | 1 = Math.floor(now / 220) % 2 === 0 ? 0 : 1;
   rect(ctx, x - 16, y - PX, 40, PX, "#1e1a14"); // shadow
-  drawCharacter(ctx, a, x - 20, y - CHAR_H, frame);
+  drawCharacter(ctx, a, x - 20, y - CHAR_H, frame, "right");
 
   // Name + HP bar (§3c: names, HP, what they're carrying)
   ctx.font = `${3 * PX}px monospace`;
