@@ -16,6 +16,7 @@ import { rect } from "../rendering/PixelRenderer";
 import { drawReaction } from "../rendering/ReactionRenderer";
 import { PricingPanel } from "../ui/PricingPanel";
 import { LootOfferPanel } from "../ui/LootOfferPanel";
+import { ShopExpansion } from "../ui/ShopExpansion";
 import { WholesalePanel } from "../ui/WholesalePanel";
 import type { Adventurer, GameState, Item } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
@@ -60,22 +61,25 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
   const [sel, setSel] = useState<{ slot: number; item: Item } | null>(null);
   const selRef = useRef(sel);
   selRef.current = sel;
-  // Wholesale cart: present only during the afternoon, so poll for it and shut
-  // the panel when the cart packs up.
-  const [shopping, setShopping] = useState(false);
+  // The top-right corner holds the contextual panels — restock while the cart
+  // is in town, loot offers while adventurers are waiting, expansion whenever
+  // there's a tier left to buy. One open at a time.
+  const [corner, setCorner] = useState<CornerPanel>(null);
   const [cartHere, setCartHere] = useState(engine.state.merchant !== null);
-  // Loot offers arrive in the evening and expire at nightfall; same treatment.
-  const [viewingOffers, setViewingOffers] = useState(false);
   const [offerCount, setOfferCount] = useState(engine.state.lootOffers.length);
+  const [canExpand, setCanExpand] = useState(engine.nextExpansionCost() !== null);
   useEffect(() => {
     const id = setInterval(() => {
       const here = engine.state.merchant !== null;
       setCartHere(here);
-      if (!here) setShopping(false);
-
       const offers = engine.state.lootOffers.length;
       setOfferCount(offers);
-      if (offers === 0) setViewingOffers(false);
+      setCanExpand(engine.nextExpansionCost() !== null);
+
+      // Close a panel whose reason for existing just went away.
+      setCorner((open) =>
+        (open === "restock" && !here) || (open === "offers" && offers === 0) ? null : open,
+      );
     }, 250);
     return () => clearInterval(id);
   }, [engine]);
@@ -162,33 +166,22 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
           <PricingPanel item={sel.item} onSetPrice={setPrice} onClose={() => setSel(null)} />
         </div>
       )}
-      {cartHere && (
+      {cornerButtons(cartHere, offerCount, canExpand).map((btn, row) => (
         <button
-          onClick={() => {
-            setViewingOffers(false); // one panel at a time in the corner
-            setShopping((open) => !open);
-          }}
-          style={cornerButton(0)}
+          key={btn.key}
+          onClick={() => setCorner((open) => (open === btn.key ? null : btn.key))}
+          style={cornerButton(row)}
         >
-          🛒 Restock
+          {btn.label}
         </button>
-      )}
-      {offerCount > 0 && (
-        <button
-          onClick={() => {
-            setShopping(false);
-            setViewingOffers((open) => !open);
-          }}
-          style={cornerButton(cartHere ? 1 : 0)}
-        >
-          💰 Offers ({offerCount})
-        </button>
-      )}
-      {(shopping || viewingOffers) && (
-        <div style={panelCorner((cartHere ? 1 : 0) + (offerCount > 0 ? 1 : 0))}>
-          {shopping ?
-            <WholesalePanel engine={engine} onClose={() => setShopping(false)} />
-          : <LootOfferPanel engine={engine} onClose={() => setViewingOffers(false)} />}
+      ))}
+      {corner && (
+        <div style={panelCorner(cornerButtons(cartHere, offerCount, canExpand).length)}>
+          {corner === "restock" ?
+            <WholesalePanel engine={engine} onClose={() => setCorner(null)} />
+          : corner === "offers" ?
+            <LootOfferPanel engine={engine} onClose={() => setCorner(null)} />
+          : <ShopExpansion engine={engine} onClose={() => setCorner(null)} />}
         </div>
       )}
       <button
@@ -240,6 +233,21 @@ function panelAnchor(slot: number, layout: ShelfLayout): CSSProperties {
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+type CornerPanel = "restock" | "offers" | "expand" | null;
+
+/** Which contextual buttons the shop is currently offering, top to bottom. */
+function cornerButtons(
+  cartHere: boolean,
+  offerCount: number,
+  canExpand: boolean,
+): { key: Exclude<CornerPanel, null>; label: string }[] {
+  const buttons: { key: Exclude<CornerPanel, null>; label: string }[] = [];
+  if (cartHere) buttons.push({ key: "restock", label: "🛒 Restock" });
+  if (offerCount > 0) buttons.push({ key: "offers", label: `💰 Offers (${offerCount})` });
+  if (canExpand) buttons.push({ key: "expand", label: "🔨 Expand" });
+  return buttons;
 }
 
 /** Corner buttons stack down the top-right; row 0 is the topmost. */
