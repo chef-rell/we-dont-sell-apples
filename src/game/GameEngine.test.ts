@@ -593,21 +593,35 @@ describe("wipe stabilizer (#76, spec V2.6)", () => {
   }
 
   it("a same-day multi-death wipe spawns more than one newcomer in a single wave", () => {
+    // Deterministic: drive the death bookkeeping through the engine's real
+    // handleOutcome path instead of hoping a 20-day unseeded sim happens to
+    // produce a same-day multi-death (the original form flaked ~1/8 runs).
     const e = new GameEngine(false);
     e.state.aiMode = "off";
-    for (const a of e.state.adventurers) makeFragile(a);
-    const arrivalWaveSizes: number[] = [];
-    let prevCount = e.state.adventurers.length;
-    for (let i = 0; i < 6000 * 20; i++) {
-      e.tick(100);
-      if (e.state.adventurers.length > prevCount) {
-        arrivalWaveSizes.push(e.state.adventurers.length - prevCount);
-      }
-      prevCount = e.state.adventurers.length;
+    for (const a of e.state.adventurers.slice(0, 3)) {
+      a.alive = false;
+      a.state = "dead";
+      e["handleOutcome"](a, {
+        adventurerId: a.id,
+        day: e.state.day,
+        area: "forest_edge",
+        monsterName: "Goblin",
+        monsterDefeated: false,
+        damageTaken: 99,
+        survived: false,
+        lootItemKeys: [],
+        goldFound: 0,
+        brokenItems: [],
+      });
     }
-    // Proof the wave size scales with the death count instead of always
-    // trickling in exactly one newcomer per rollover.
-    expect(arrivalWaveSizes.some((size) => size > 1)).toBe(true);
+    e["replacementDueDay"] = e.state.day + 1; // wave due at the next rollover
+    const aliveBefore = e.state.adventurers.filter((x) => x.alive).length;
+    e.state.timeOfDay = 0.999;
+    e.tick(1000); // crosses the day boundary -> onNewDay -> replacement wave
+    const aliveAfter = e.state.adventurers.filter((x) => x.alive).length;
+    // 3 deaths -> waveSize = min(deficit 3, ceil(3/2)) = 2: scales with the
+    // death count instead of trickling in exactly one newcomer.
+    expect(aliveAfter - aliveBefore).toBe(2);
   });
 
   it("more deaths in a wave pull the next replacement in sooner than a lone death would", () => {
