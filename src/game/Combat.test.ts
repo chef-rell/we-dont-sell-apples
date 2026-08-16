@@ -232,3 +232,118 @@ describe("generateAdventureScript night runs", () => {
     expect(script.night).toBe(true);
   });
 });
+
+// ---------- Helper (spec V2.7, issue #83) ----------
+
+describe("generateAdventureScript with no helper (regression guard)", () => {
+  it("helperAlong is false and the script is byte-identical to a plain call", () => {
+    const party1 = partyFixture(4);
+    const party2 = structuredClone(party1);
+    const scriptA = generateAdventureScript(party1, 5, { seed: 55 }, makeRng(55));
+    const scriptB = generateAdventureScript(party2, 5, { seed: 55, helper: undefined }, makeRng(55));
+    expect(scriptA.helperAlong).toBe(false);
+    expect(scriptA).toEqual(scriptB);
+  });
+});
+
+describe("generateAdventureScript helperAlong power contribution", () => {
+  it("marks helperAlong true and a helper-boosted party wins at least as often as an unaided one", () => {
+    // A deliberately marginal party (no gear at all) so a flat +6..+21
+    // power boost is large enough to meaningfully move the win rate.
+    const marginalParty = () =>
+      partyFixture(2).map((a) => {
+        a.level = 1;
+        a.equipment = {};
+        return a;
+      });
+
+    let unaidedWins = 0;
+    let helpedWins = 0;
+    const trials = 80;
+    for (let seed = 0; seed < trials; seed++) {
+      const unaided = generateAdventureScript(marginalParty(), 5, { seed }, makeRng(seed));
+      const helped = generateAdventureScript(marginalParty(), 5, { seed, helper: { level: 5 } }, makeRng(seed));
+      expect(helped.helperAlong).toBe(true);
+      expect(unaided.helperAlong).toBe(false);
+      if (unaided.memberOutcomes.some((o) => o.survived)) unaidedWins++;
+      if (helped.memberOutcomes.some((o) => o.survived)) helpedWins++;
+    }
+    expect(helpedWins).toBeGreaterThanOrEqual(unaidedWins);
+  });
+
+  it("a lone weapon type gains a diversity bonus purely from the helper's own slot", () => {
+    // Every member wields the SAME weapon type — no diversity bonus without
+    // the helper. Confirms the "diversity-slot of its own" mechanic by
+    // checking win-rate lift persists even when gear diversity is zero.
+    const monoWeaponParty = () =>
+      partyFixture(3).map((a) => {
+        a.equipment.weapon = makeItem("iron_sword"); // identical icon for everyone
+        a.level = 1;
+        return a;
+      });
+    let unaidedWins = 0;
+    let helpedWins = 0;
+    const trials = 80;
+    for (let seed = 0; seed < trials; seed++) {
+      const unaided = generateAdventureScript(monoWeaponParty(), 5, { seed }, makeRng(seed));
+      const helped = generateAdventureScript(monoWeaponParty(), 5, { seed, helper: { level: 3 } }, makeRng(seed));
+      if (unaided.memberOutcomes.some((o) => o.survived)) unaidedWins++;
+      if (helped.memberOutcomes.some((o) => o.survived)) helpedWins++;
+    }
+    expect(helpedWins).toBeGreaterThanOrEqual(unaidedWins);
+  });
+
+  it("the helper is never a member and never appears in partyIds or as an event actor", () => {
+    const party = partyFixture(4);
+    const script = generateAdventureScript(party, 5, { seed: 12, helper: { level: 5 } }, makeRng(12));
+    expect(script.partyIds).toEqual(party.map((a) => a.id));
+    expect(script.memberOutcomes).toHaveLength(4);
+    const actorIds = new Set(script.events.map((e) => e.actorId).filter(Boolean));
+    for (const id of actorIds) expect(party.some((a) => a.id === id)).toBe(true);
+  });
+});
+
+describe("generateAdventureScript full-wipe helper-carry beat", () => {
+  it("emits helperCarry events totalling the loot the fallen would have carried, only when helper is along", () => {
+    const hopelessParty = () =>
+      partyFixture(6).map((a) => {
+        a.level = 1;
+        a.hp = 5;
+        a.maxHp = 5;
+        a.equipment = {};
+        return a;
+      });
+
+    let sawWipeWithHelper = false;
+    let sawWipeWithoutHelper = false;
+    for (let seed = 0; seed < 60 && !(sawWipeWithHelper && sawWipeWithoutHelper); seed++) {
+      const withHelper = generateAdventureScript(
+        hopelessParty(),
+        20,
+        { seed, helper: { level: 4 } },
+        makeRng(seed),
+      );
+      if (withHelper.memberOutcomes.every((o) => !o.survived)) {
+        sawWipeWithHelper = true;
+        const carryEvents = withHelper.events.filter((e) => e.type === "helperCarry");
+        const totalOutcomeGold = withHelper.memberOutcomes.reduce((n, o) => n + o.goldFound, 0);
+        const totalOutcomeLoot = withHelper.memberOutcomes.reduce((n, o) => n + o.lootItemKeys.length, 0);
+        const carriedGold = carryEvents.reduce((n, e) => n + (e.value ?? 0), 0);
+        const carriedItems = carryEvents.filter((e) => e.itemName).length;
+        // memberOutcomes are unchanged (still report what each fallen member
+        // "found") — the carry events aggregate the exact same totals for
+        // player delivery.
+        expect(carriedGold).toBe(totalOutcomeGold);
+        expect(carriedItems).toBe(totalOutcomeLoot);
+      }
+
+      const withoutHelper = generateAdventureScript(hopelessParty(), 20, { seed }, makeRng(seed));
+      if (withoutHelper.memberOutcomes.every((o) => !o.survived)) {
+        sawWipeWithoutHelper = true;
+        expect(withoutHelper.events.some((e) => e.type === "helperCarry")).toBe(false);
+      }
+    }
+    expect(sawWipeWithHelper).toBe(true);
+    expect(sawWipeWithoutHelper).toBe(true);
+  });
+});

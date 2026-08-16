@@ -174,7 +174,14 @@ export type AdventureScriptEventType =
   | "goldDrop"
   | "victory"
   | "defeat"
-  | "returnMarch";
+  | "returnMarch"
+  // spec V2.7 (issue #83): fired only on a full party wipe with the helper
+  // along on the adventure track — the loot/gold that would otherwise be
+  // lost with the party gets delivered to the PLAYER instead (the helper,
+  // who never dies, drags the sack home alone). One event per gold total
+  // (`value`) and per surviving item (`itemName`), same one-event-per-drop
+  // shape as lootDrop/goldDrop above.
+  | "helperCarry";
 
 export interface AdventureScriptEvent {
   t: number; // 0..1 through the afternoon
@@ -193,6 +200,12 @@ export interface AdventureScript {
   partyIds: string[]; // adventurer UUIDs, in marching order
   events: AdventureScriptEvent[];
   memberOutcomes: AdventureOutcome[]; // one per partyIds entry, final at generation
+  /** Whether the helper tagged along on this script's trip (spec V2.7,
+   *  issue #83). Additive; `loadGame()` defaults old persisted scripts to
+   *  false. Drives the party-power boost and the full-wipe helperCarry
+   *  beat in Combat.ts — never affects who's actually in `partyIds`, since
+   *  the helper isn't a real party member (it can't die or be targeted). */
+  helperAlong: boolean;
 }
 
 /** A returning adventurer offering loot to the player. Dev B's
@@ -239,6 +252,40 @@ export interface OfflineSummary {
   adventurersLost: string[]; // names
   adventurersArrived: string[]; // names
   notableEvents: string[]; // human-readable lines
+}
+
+// ---------- The Helper (spec V2.7, issue #83) ----------
+
+/** Creation-time aptitude: curious→craft, brave→adventure, charming→shop.
+ *  Matching the PERMANENT track (below) grants a ×1.5 daily XP multiplier. */
+export type HelperTrait = "curious" | "brave" | "charming";
+
+/** The permanent, one-way specialization chosen at day 10+ via
+ *  `engine.chooseTrack()`. "none" before that choice is made. "craft" is a
+ *  valid track value in the contract (Phase 4 builds it out) but
+ *  `chooseTrack()` rejects selecting it until then — see V2.15. */
+export type HelperTrack = "none" | "shop" | "adventure" | "craft";
+
+/** Today's job — one per day, sticky across days until
+ *  `engine.setHelperAssignment()` changes it. Freely choosable among all
+ *  three from day 1 (see PR body): `track` gates the PERMANENT commitment
+ *  and its trait XP bonus, not which daily job is available. */
+export type HelperAssignment = "chores" | "shop" | "adventure";
+
+/** The player's second character (spec V2.7). Created once via
+ *  `engine.createCharacters()` (issue #84 owns the creation UI); `null`
+ *  means "not created yet" — every system treats that as a no-op, so the
+ *  game plays identically to before this entity existed. */
+export interface Helper {
+  id: string; // UUID, consistent with every other entity in the contract
+  name: string;
+  appearance: { skin: number; hair: number };
+  trait: HelperTrait;
+  track: HelperTrack;
+  level: number; // 1-5, thresholds in src/entities/Helper.ts
+  xp: number;
+  assignment: HelperAssignment;
+  assignmentDay: number; // day setHelperAssignment last set it (display/analytics)
 }
 
 // ---------- Trade ledger (playtest feature: learn-from-stats, §17-safe) ----------
@@ -370,6 +417,13 @@ export interface GameState {
    *  or after day rollover clears it. Additive; `loadGame()` defaults old
    *  saves to null. */
   currentScript: AdventureScript | null;
+  /** The player's second character (spec V2.7, issue #83); `null` until
+   *  `engine.createCharacters()` runs. Additive; `loadGame()` defaults old
+   *  saves to null — every system already treats null as "no helper yet". */
+  helper: Helper | null;
+  /** The shopkeeper's own appearance, set alongside the helper at creation
+   *  (spec V2.7). Additive; `loadGame()` defaults old saves to null. */
+  shopkeeperAppearance: { skin: number; hair: number } | null;
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

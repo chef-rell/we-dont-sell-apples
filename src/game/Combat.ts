@@ -6,6 +6,7 @@
 import type { Adventurer, AdventureOutcome, AdventureScript, AdventureScriptEvent, WildernessArea } from "../types";
 import { MONSTERS, encounterFor, type MonsterDef } from "../entities/Monster";
 import { DURABILITY_LOSS_MIN, DURABILITY_LOSS_MAX } from "../utils/constants";
+import { helperCombatPower } from "../entities/Helper";
 
 /** Adventurer combat power from level + gear (spec §7 death factors). */
 export function combatPower(a: Adventurer): number {
@@ -153,20 +154,32 @@ function choosePartyArea(party: Adventurer[], day: number): WildernessArea {
 /** Aggregate party power: sum of member combatPower, boosted by a
  *  diversity bonus — +8% per distinct equipped weapon type (icon key,
  *  e.g. sword/bow/staff/dagger) beyond the first. A mono-weapon party of
- *  six swordsmen gets no bonus; a mixed party does (spec V2.6). */
-function diversityBonus(members: Adventurer[]): number {
+ *  six swordsmen gets no bonus; a mixed party does (spec V2.6).
+ *
+ *  `helperSlot` (spec V2.7, issue #83): the adventure-track helper tagging
+ *  along counts as its own distinct "weapon type" for this bonus — a
+ *  diversity slot of its own — regardless of what the real members carry.
+ *  It is never added to `members`, so it can't be picked as a hit target
+ *  by pickRandom() below and can never die (spec: "never dies"). */
+function diversityBonus(members: Adventurer[], helperSlot: boolean): number {
   const weaponTypes = new Set<string>();
   for (const m of members) {
     const w = m.equipment.weapon;
     if (w && w.durability !== 0) weaponTypes.add(w.icon);
   }
+  if (helperSlot) weaponTypes.add("__helper__");
   return weaponTypes.size > 1 ? 1 + 0.08 * (weaponTypes.size - 1) : 1;
 }
 
-function partyPower(members: Adventurer[]): number {
-  if (members.length === 0) return 0;
-  const sum = members.reduce((n, m) => n + combatPower(m), 0);
-  return sum * diversityBonus(members);
+/** `helperPower` is the flat adventure-track contribution (6 + 3×level,
+ *  spec V2.7) added to the summed member power before the diversity
+ *  multiplier applies; 0/false by default so a null-or-unassigned helper
+ *  produces byte-identical results to pre-#83 code (no rng draws added
+ *  either way — this function never calls rng). */
+function partyPower(members: Adventurer[], helperPower = 0, helperSlot = false): number {
+  if (members.length === 0 && helperPower === 0) return 0;
+  const sum = members.reduce((n, m) => n + combatPower(m), 0) + helperPower;
+  return sum * diversityBonus(members, helperSlot);
 }
 
 /** count encounters, escalating in difficulty, the last always the hardest
@@ -225,15 +238,23 @@ function pickRandom<T>(pool: T[], n: number, rng: () => number): T[] {
  * resolveAdventure) — gear that breaks mid-script stops contributing to
  * party power for the remainder of THIS script, so a run that chews through
  * weapons gets visibly harder as it goes.
+ *
+ * `opts.helper` (spec V2.7, issue #83): present exactly when the
+ * adventure-track helper is along today. Undefined (the default) leaves
+ * every helper-related code path a no-op and every number identical to
+ * pre-#83 behavior — confirmed via `scripts/balance-report.ts`, which never
+ * passes this field.
  */
 export function generateAdventureScript(
   party: Adventurer[],
   day: number,
-  opts: { night?: boolean; seed?: number } = {},
+  opts: { night?: boolean; seed?: number; helper?: { level: number } } = {},
   rng: () => number = Math.random,
 ): AdventureScript {
   const night = opts.night ?? false;
   const seed = opts.seed ?? 0;
+  const helperAlong = opts.helper != null;
+  const helperPower = helperAlong ? helperCombatPower(opts.helper!) : 0;
   const area = choosePartyArea(party, day);
   const size = party.length;
   // Balance guardrail (issue #76): the issue's starting formula —
@@ -269,7 +290,7 @@ export function generateAdventureScript(
     const nextT = () => (subT = Math.min(subT + 0.001, encT + 0.02));
 
     const aliveMembers = party.filter((a) => aliveIds.has(a.id));
-    const power = partyPower(aliveMembers);
+    const power = partyPower(aliveMembers, helperPower, helperAlong);
     // Balance guardrail (issue #76): threat scales 1:1 with a solo party
     // (coefficient exactly 1 at size 1 — identical to v1's unscaled
     // monsterThreat) and steeper than power grows per extra member beyond
@@ -365,6 +386,27 @@ export function generateAdventureScript(
   events.push({ t: clamp(numEncounters / (numEncounters + 1) + 0.015, 0, 0.99), type: wiped ? "defeat" : "victory" });
   if (!wiped) events.push({ t: 1, type: "returnMarch" });
 
+  // Full-wipe beat (spec V2.7, issue #83): on a total loss, `goldById`/
+  // `lootById` still hold whatever each fallen member won in an EARLIER
+  // encounter before dying in a later one — memberOutcomes below still
+  // reports it against their name (unchanged), but nobody survives to
+  // actually carry it home. With the helper along, it isn't lost: these
+  // events are the delivery instructions GameEngine reads, once, to credit
+  // the PLAYER directly (gold to s.gold, items to the shop) instead.
+  // Without a helper this trip, the loot is simply gone — same as v1 ever
+  // was for a lone adventurer who didn't come back.
+  if (wiped && helperAlong) {
+    const carryT = clamp(numEncounters / (numEncounters + 1) + 0.02, 0, 0.995);
+    let totalGold = 0;
+    for (const id of partyIds) totalGold += goldById.get(id) ?? 0;
+    if (totalGold > 0) events.push({ t: carryT, type: "helperCarry", value: totalGold });
+    for (const id of partyIds) {
+      for (const itemKey of lootById.get(id) ?? []) {
+        events.push({ t: carryT, type: "helperCarry", itemName: itemKey });
+      }
+    }
+  }
+
   const memberOutcomes: AdventureOutcome[] = party.map((a) => ({
     adventurerId: a.id,
     area,
@@ -387,5 +429,6 @@ export function generateAdventureScript(
     partyIds,
     events,
     memberOutcomes,
+    helperAlong,
   };
 }

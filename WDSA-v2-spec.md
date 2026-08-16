@@ -371,3 +371,35 @@ on every load). Build notes:
    name (`Item.name` off the real equipped item), so it's shown as-is with
    the generic `broken` icon rather than trying to reverse-look-up a def key
    from a name.
+
+**2026-08-16 — Phase 3 helper engine landed** (issue #83, `src/entities/
+Helper.ts` + `GameEngine.createCharacters`/`setHelperAssignment`/
+`chooseTrack`/`suggestPrice`). Character-creation UI is issue #84's job;
+this PR is the deterministic entity + rollover math + the two seams
+(behavior-machine wait scaling, Combat.ts party power/wipe-carry) it wires
+into. Judgment calls, since V2.7 leaves them implicit:
+
+1. **`assignment` vs `track`.** The issue's own mechanics text gates every
+   effect off today's `assignment` ("while assignment==='shop'", "while
+   assignment==='adventure'"), never off the permanent `track`. Read
+   literally, that means all three daily jobs are choosable from day 1 —
+   "days 1-10" gates only the PERMANENT `chooseTrack()` commitment (and,
+   via `traitMatchesTrack`, the ×1.5 XP bonus, since `track` is "none"
+   until then and never matches). This turns the tutorial window into a
+   genuine trial run of all three jobs rather than a chores-only lockout,
+   and was picked over inventing an unwritten pre-day-10 assignment gate.
+2. **Full-wipe delivery timing.** `generateAdventureScript` only attaches
+   `helperCarry` events (facts, final at generation, per V2.5); GameEngine
+   applies them to `s.gold`/`s.inventory` once, at the afternoon→evening
+   phase boundary — the same beat every other per-member script outcome
+   already resolves at in `AdventurerBehavior`'s `"adventuring"` case, so a
+   wipe (which has no surviving member to run that per-member path) still
+   lands its player-facing effect at the same point in the day as always.
+3. **Diversity slot.** "a diversity-slot of its own" is implemented as one
+   extra sentinel entry in Combat.ts's weapon-type `Set` whenever the
+   helper is along, regardless of level — so even a mono-weapon party
+   gains the bonus with a helper present, on top of the flat `6 + 3×level`
+   power add.
+4. Helper XP/level are a single track-agnostic curve (0/30/80/160/280);
+   `track` only gates the trait multiplier and the permanent unlock, not a
+   separate per-track level.
