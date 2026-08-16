@@ -10,6 +10,12 @@ import { makeItem, startingInventory } from "../entities/Item";
 import { loadGame, saveGame } from "./GameStatePersistence";
 import { elapsedOfflineDays, runOfflineSim } from "./OfflineSim";
 import { arrivalBonus, processDayEnd } from "./MoraleSystem";
+import {
+  fallbackReply,
+  freshChatterState,
+  maybeChatter,
+  playerChatResponders,
+} from "./TownChat";
 import { makeDecision, type MorningPlanDecision } from "../entities/AdventurerAI";
 import {
   TOWN,
@@ -37,6 +43,7 @@ export class GameEngine {
   state: GameState;
   private contexts = new Map<string, BehaviorContext>();
   private plannedDay = new Map<string, number>(); // adventurer id → last day AI planning fired
+  private chatter = freshChatterState();
 
   constructor(resume = true) {
     // Continue from an existing save when one exists (spec §12); pass
@@ -74,6 +81,8 @@ export class GameEngine {
       if (result.outcome) this.handleOutcome(a, result.outcome);
       this.maybePlanWithAI(a);
     }
+    const chat = maybeChatter(s, this.chatter);
+    if (chat) this.pushMessage(chat);
     this.updateMerchant();
     this.checkGameOver();
     if (dayRolled) this.onNewDay();
@@ -242,6 +251,44 @@ export class GameEngine {
   /** Manual save; also called automatically at each day rollover. */
   save(): void {
     saveGame(this.state);
+  }
+
+  /** The player speaks in town chat (§16). Appends their message and
+   *  triggers reactive responses — AI-written in full mode, deterministic
+   *  otherwise. Dev B's ChatPanel calls this. */
+  sendPlayerChat(text: string): void {
+    const s = this.state;
+    const trimmed = text.trim().slice(0, 200);
+    if (!trimmed) return;
+    this.pushMessage({
+      id: `player-${s.day}-${Math.round(s.timeOfDay * 10000)}`,
+      senderId: "player",
+      senderName: "Shopkeeper",
+      type: "player",
+      content: trimmed,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
+    for (const responder of playerChatResponders(s, trimmed)) {
+      const reply: GameState["messages"][number] = {
+        id: `reply-${s.day}-${responder.id}-${Math.round(s.timeOfDay * 10000)}`,
+        senderId: responder.id,
+        senderName: responder.name,
+        type: "social",
+        content: fallbackReply(responder, trimmed),
+        timestamp: s.timeOfDay,
+        day: s.day,
+      };
+      this.pushMessage(reply);
+      if (s.aiMode === "full") {
+        const context =
+          `The shopkeeper just said in town chat: "${trimmed}". ` +
+          `Reply with one short in-character line.`;
+        void makeDecision("shop_flavor", responder, context, s.tokenBudget).then((d) => {
+          if (d && "text" in d) reply.content = d.text;
+        });
+      }
+    }
   }
 
   /** Player accepts a loot offer (Dev B's buy UI calls this). */
