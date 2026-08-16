@@ -28,6 +28,7 @@ export function loadGame(): GameState | null {
     state.recentOutcomes ??= [];
     state.merchant ??= null;
     state.pricingHistory ??= [];
+    for (const a of state.adventurers) a.browsingItemId ??= null;
     state.speed = 1; // never resume paused or fast-forwarded
     state.view = "town";
     return state;

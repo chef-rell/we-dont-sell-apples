@@ -102,6 +102,10 @@ export interface Adventurer {
   alive: boolean;
   daysSinceLastAdventure: number;
   nightOwl: boolean;
+  /** Shelf item currently being examined; null outside browsing/buying.
+   *  Mirrored from the behavior machine so views can draw reaction bubbles
+   *  for the REAL item under consideration (issue #12, §6). */
+  browsingItemId: string | null;
   // Appearance seeds so rendering is stable per-adventurer
   appearance: { skin: number; hair: number }; // indices into palette arrays
 }

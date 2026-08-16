@@ -121,6 +121,7 @@ export function stepAdventurer(
         a.state = "browsing";
         bc.timer = browseTime(a);
         bc.browsingItem = pickShelfItem(a, s);
+        a.browsingItemId = bc.browsingItem;
       }
       break;
     }
@@ -137,6 +138,7 @@ export function stepAdventurer(
         const next = pickShelfItem(a, s, bc.browsingItem);
         if (a.personality.spendingStyle === "careful" && next) {
           bc.browsingItem = next;
+          a.browsingItemId = next;
           bc.timer = browseTime(a);
         } else {
           leaveShop(a, bc);
@@ -323,6 +325,7 @@ function leaveShop(a: Adventurer, bc: BehaviorContext): void {
   a.state = "wandering";
   bc.shopped = true;
   bc.browsingItem = null;
+  a.browsingItemId = null;
   bc.target = { x: TOWN.square.x, y: TOWN.square.y + 20 };
 }
 
