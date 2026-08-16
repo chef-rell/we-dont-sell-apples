@@ -39,6 +39,8 @@ export interface BehaviorContext {
   /** Set true once the day's shop trip / adventure is done. */
   shopped: boolean;
   adventured: boolean;
+  /** Last day beginDay ran — guards the once-per-day plan (0 = never). */
+  planDay: number;
   /** Loot keys still to offer the player after returning. */
   lootToSell: string[]; // item ids in a.inventory
   /** The offer currently on the table, if any. */
@@ -53,6 +55,7 @@ export function freshContext(): BehaviorContext {
     browsingItem: null,
     shopped: false,
     adventured: false,
+    planDay: 0,
     lootToSell: [],
     pendingOfferId: null,
   };
@@ -81,13 +84,16 @@ export function stepAdventurer(
   switch (a.state) {
     case "resting": {
       // Wake at dawn: plan the day (deterministic immediately; AI may override).
-      if (s.phase === "dawn" || s.phase === "morning") {
-        beginDay(a, bc);
+      if ((s.phase === "dawn" || s.phase === "morning") && bc.planDay !== s.day) {
+        beginDay(a, bc, s.day);
       }
       break;
     }
 
     case "wandering": {
+      if ((s.phase === "dawn" || s.phase === "morning") && bc.planDay !== s.day) {
+        beginDay(a, bc, s.day); // covers day 1, when nobody starts in "resting"
+      }
       // Route by plan and phase.
       if (s.phase === "night") {
         headHome(a, bc);
@@ -108,15 +114,25 @@ export function stepAdventurer(
         bc.target = { x: TOWN.gate.x, y: TOWN.gate.y + 30 };
         break;
       }
-      // Idle drift around the square/tavern.
+      // Idle drift: pick a fresh spot each time (random is fine here — this
+      // is ambience, not a §6 verdict; the old deterministic pick meant one
+      // walk per day and then a statue).
       if (!bc.target && bc.timer <= 0) {
-        const spots = [TOWN.square, { x: TOWN.tavernDoor.x, y: TOWN.tavernDoor.y + 20 }];
-        const p = spots[(a.appearance.hair + s.day) % spots.length];
-        bc.target = { x: p.x + jitter(a, 80), y: p.y + jitter(a, 50) };
+        const spots = [
+          TOWN.square,
+          { x: TOWN.tavernDoor.x, y: TOWN.tavernDoor.y + 20 },
+          { x: TOWN.shop.x + 60, y: TOWN.shop.y + 90 },
+          { x: TOWN.houses[1].x + 20, y: TOWN.houses[1].y - 40 },
+        ];
+        const p = spots[Math.floor(Math.random() * spots.length)];
+        bc.target = {
+          x: p.x + Math.floor(Math.random() * 100) - 50,
+          y: p.y + Math.floor(Math.random() * 60) - 30,
+        };
       }
       if (walkToward(a, bc, dt)) {
         bc.target = null;
-        bc.timer = 6 + (a.appearance.skin % 3) * 4; // linger
+        bc.timer = 4 + Math.random() * 8; // linger, varied
       }
       break;
     }
@@ -292,7 +308,8 @@ export function stepAdventurer(
 
 // ---------- day start ----------
 
-function beginDay(a: Adventurer, bc: BehaviorContext): void {
+function beginDay(a: Adventurer, bc: BehaviorContext, day: number): void {
+  bc.planDay = day;
   a.hp = Math.min(a.maxHp, a.hp + 10); // overnight recovery
   bc.plan = fallbackMorningPlan(a);
   bc.shopped = false;
@@ -426,10 +443,6 @@ function walkToward(a: Adventurer, bc: BehaviorContext, dt: number): boolean {
 
 function areaName(area: "forest_edge" | "shadow_cave"): string {
   return area === "forest_edge" ? "Forest Edge" : "Shadow Cave";
-}
-
-function jitter(a: Adventurer, range: number): number {
-  return ((a.appearance.skin * 7 + a.appearance.hair * 13) % range) - range / 2;
 }
 
 function jitterAbs(a: Adventurer, range: number): number {
