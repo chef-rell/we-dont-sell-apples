@@ -270,5 +270,23 @@ bus, renderer/logic separation, `makeDecision` as the swappable AI seam).
 
 ## V2.15 v2 deviations log
 
-*(empty — append dated entries here when a build decision deviates from this spec,
-per v1 §20 rule 4.)*
+*(append dated entries here when a build decision deviates from this spec, per
+v1 §20 rule 4.)*
+
+**2026-08-16 — Phase 0 complete** (issues #55–#60 via PRs #63, #64, #66, #67;
+plus #65, a test-determinism fix). Build notes for later phases:
+
+1. The 100ms delta clamp lives in `App.tsx`'s central loop, NOT inside
+   `engine.tick` — `OfflineSim` ticks in intentional 1000ms steps that must
+   not be clamped (#64).
+2. A derived legacy `TOWN` shim remains in `GameEngine` solely for
+   `TownView`'s rendering, which Phase 0 deliberately didn't touch. Phase 1's
+   iso TownView must consume `GameState.buildings` directly and delete the
+   shim (#67).
+3. Clickable buildings' registry `footprint` carries the old generous click
+   regions; true walk-to anchors live in `door`. The square's footprint
+   stores its anchor at the origin rather than the drawn plaza rect
+   (harmless — not clickable); clean up when Phase 1 redoes geometry (#67).
+4. `WildernessView` passes a fixed `"right"` facing (staged tableau, not live
+   movement), and the equipped weapon renders as one uniform blade regardless
+   of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
