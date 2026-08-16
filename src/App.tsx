@@ -2,6 +2,8 @@
 // Shop/Wilderness views arrive in Phases 2 and 4.
 
 import { useEffect, useRef, useState } from "react";
+import { sound } from "./audio/SoundManager";
+import { useGameAudio } from "./audio/useGameAudio";
 import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
 import { NightSummary } from "./ui/NightSummary";
@@ -41,6 +43,14 @@ export default function App() {
     setRun((n) => n + 1);
   };
 
+  useGameAudio(engine);
+  const [muted, setMuted] = useState(sound.isMuted);
+  const toggleMute = () => {
+    const next = !muted;
+    sound.setMuted(next);
+    setMuted(next);
+  };
+
   const setSpeed = (speed: GameSpeed) => {
     engine.state.speed = speed;
   };
@@ -61,6 +71,13 @@ export default function App() {
           Day {hud.day} · {hud.phase}
         </div>
         <div className="hud-controls">
+          <button
+            className={muted ? "" : "active"}
+            onClick={toggleMute}
+            title={muted ? "Unmute" : "Mute"}
+          >
+            {muted ? "🔇" : "🔊"}
+          </button>
           <button
             className={hud.speed === 0 ? "active" : ""}
             onClick={() => setSpeed(hud.speed === 0 ? 1 : 0)}
