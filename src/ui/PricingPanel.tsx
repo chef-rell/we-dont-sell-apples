@@ -35,18 +35,28 @@ export function PricingPanel({
   );
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // Mirrors item.salePrice !== null. The item is mutated outside React, so the
+  // footer label needs local state to re-render when the tag comes on or off.
+  const [listed, setListed] = useState(item.salePrice !== null);
 
   // Re-seed when the player clicks a different item without closing the panel.
   useEffect(() => {
     setPrice(item.salePrice ?? lastPriceByName.get(item.name) ?? DEFAULT_PRICE);
+    setListed(item.salePrice !== null);
     setEditing(false);
   }, [item]);
 
   const commit = (next: number) => {
     const clamped = clamp(Math.round(next), 1, MAX_PRICE);
     setPrice(clamped);
+    setListed(true);
     lastPriceByName.set(item.name, clamped);
     onSetPrice(clamped);
+  };
+
+  const unprice = () => {
+    setListed(false);
+    onSetPrice(null);
   };
 
   const bump = (delta: number) => commit(price + delta);
@@ -89,7 +99,12 @@ export function PricingPanel({
             onBlur={commitDraft}
             onKeyDown={(e) => {
               if (e.key === "Enter") commitDraft();
-              if (e.key === "Escape") setEditing(false);
+              if (e.key === "Escape") {
+                // Esc cancels editing only — don't let it reach the
+                // window listener that closes the whole panel.
+                e.stopPropagation();
+                setEditing(false);
+              }
             }}
             style={priceInput}
           />
@@ -111,12 +126,12 @@ export function PricingPanel({
 
       <div style={footerRow}>
         <span style={{ color: PALETTE.textDim, fontSize: 11 }}>
-          {item.salePrice === null ? "not for sale yet" : "on sale"}
+          {listed ? "on sale" : "not for sale yet"}
         </span>
         <div style={{ display: "flex", gap: 6 }}>
           <button
             style={smallButton}
-            onClick={() => onSetPrice(null)}
+            onClick={unprice}
             title="Remove the price tag — adventurers will ignore this item"
           >
             Unprice
