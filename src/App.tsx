@@ -1,7 +1,9 @@
 // Root component: HUD + the triptych stage (spec V2.3, issue #77). The
-// center panel routes town/shop/wilderness/gameover by the same `view`
-// state as always; the time column and adventure-strip panels are constant
-// chrome around it, not part of that ternary.
+// center panel routes town/shop/gameover by the same `view` state as
+// always; the time column and adventure-strip panels are constant chrome
+// around it, not part of that ternary. WildernessView is retired as of
+// issue #78 — the bottom strip panel is always visible and plays back the
+// day's AdventureScript itself, so there is no separate screen to route to.
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
@@ -20,7 +22,6 @@ import { AdventureStripPanel } from "./views/AdventureStripPanel";
 import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
-import { WildernessView } from "./views/WildernessView";
 import type { GameSpeed, GameView } from "./types";
 import { PALETTE, STRIP_H, TIME_COLUMN_W, WORLD_H, WORLD_W } from "./utils/constants";
 
@@ -179,13 +180,7 @@ export default function App() {
             <GameOverView engine={engine} onRestart={restart} />
             : view === "shop" ?
               <ShopView engine={engine} onLeave={() => go("town")} />
-            : view === "wilderness" ?
-              <WildernessView engine={engine} onLeave={() => go("town")} />
-            : <TownView
-                engine={engine}
-                onEnterShop={() => go("shop")}
-                onEnterWilderness={() => go("wilderness")}
-              />
+            : <TownView engine={engine} onEnterShop={() => go("shop")} />
             }
           </div>
           <div style={stripCellStyle}>

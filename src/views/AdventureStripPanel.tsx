@@ -1,12 +1,15 @@
-// Bottom adventure-strip panel (spec V2.3, issue #77): the triptych's third
-// panel. Placeholder-drawn until #78 lands the real AdventureScript
-// playback — own canvas + rAF loop for drawing only, exactly like every
-// other view. App.tsx's single tick loop (issue #55) is still the only
-// thing that calls engine.tick; this panel only ever reads engine.state.
+// Bottom adventure-strip panel (spec V2.3/V2.5, issue #78): the triptych's
+// third panel. Side-scrolling, read-only playback of GameState.
+// currentScript — own canvas + rAF loop for drawing only, exactly like
+// every other view. App.tsx's single tick loop (issue #55) is still the
+// only thing that calls engine.tick; this panel only ever reads
+// engine.state and hands it straight to the renderer, which owns all
+// playback timing and presentation state itself (see AdventureStripRenderer
+// .ts's animator-state note) — there is nothing else for this component to do.
 
 import { useEffect, useRef } from "react";
 import type { GameEngine } from "../game/GameEngine";
-import { renderStripPlaceholder } from "../rendering/AdventureStripRenderer";
+import { renderStrip } from "../rendering/AdventureStripRenderer";
 import { STRIP_H, WORLD_W } from "../utils/constants";
 
 export function AdventureStripPanel({ engine }: { engine: GameEngine }) {
@@ -21,7 +24,7 @@ export function AdventureStripPanel({ engine }: { engine: GameEngine }) {
 
     let raf = 0;
     const frame = (now: number) => {
-      renderStripPlaceholder(ctx, engine.state, now);
+      renderStrip(ctx, engine.state, now);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);

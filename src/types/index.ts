@@ -300,7 +300,14 @@ export type AIMode = "full" | "light" | "off";
 
 // ---------- Views ----------
 
-export type GameView = "town" | "shop" | "wilderness" | "gameover";
+/** "wilderness" dropped as of issue #78 (spec V2.5): WildernessView is
+ *  retired — the adventure strip panel (always visible, part of the
+ *  triptych chrome) plays back GameState.currentScript in its place, so
+ *  there's no longer a separate screen to route to. This is the one
+ *  non-additive contract change in that PR; it's save-safe because
+ *  GameStatePersistence.loadGame() force-resets `view` to "town" on every
+ *  load (spec §4 rule: "the contract is sacred," change flagged there). */
+export type GameView = "town" | "shop" | "gameover";
 
 // ---------- Town buildings (spec V2.8; issue #56) ----------
 
