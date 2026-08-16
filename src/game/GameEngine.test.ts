@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GameEngine } from "./GameEngine";
 import { loadGame, saveGame, SAVE_KEY } from "./GameStatePersistence";
 import { makeItem } from "../entities/Item";
-import { resolveAdventure } from "./Combat";
+import { resolveAdventure, generateAdventureScript } from "./Combat";
+import { makeRng } from "../utils/rng";
 import type { Adventurer } from "../types";
 
 // Minimal localStorage stub — node has none.
@@ -658,5 +659,265 @@ describe("wipe stabilizer (#76, spec V2.6)", () => {
     expect(daysToFirstArrivalWipe).toBeGreaterThanOrEqual(0);
     expect(daysToFirstArrivalSingle).toBeGreaterThanOrEqual(0);
     expect(daysToFirstArrivalWipe).toBeLessThanOrEqual(daysToFirstArrivalSingle);
+  });
+});
+
+// ---------- The Helper (spec V2.7, issue #83) ----------
+
+describe("helper creation and daily assignment (#83)", () => {
+  it("createCharacters sets both the shopkeeper appearance and a fresh helper, once", () => {
+    const e = freshEngine();
+    expect(e.state.helper).toBeNull();
+    expect(e.state.shopkeeperAppearance).toBeNull();
+    const ok = e.createCharacters({ skin: 1, hair: 2 }, "Robin", { skin: 3, hair: 0 }, "brave");
+    expect(ok).toBe(true);
+    expect(e.state.shopkeeperAppearance).toEqual({ skin: 1, hair: 2 });
+    expect(e.state.helper).not.toBeNull();
+    expect(e.state.helper!.name).toBe("Robin");
+    expect(e.state.helper!.appearance).toEqual({ skin: 3, hair: 0 });
+    expect(e.state.helper!.trait).toBe("brave");
+    expect(e.state.helper!.track).toBe("none");
+    expect(e.state.helper!.level).toBe(1);
+    expect(e.state.helper!.assignment).toBe("chores");
+
+    // Creation only ever happens once per save.
+    const again = e.createCharacters({ skin: 0, hair: 0 }, "Someone Else", { skin: 0, hair: 0 }, "curious");
+    expect(again).toBe(false);
+    expect(e.state.helper!.name).toBe("Robin"); // unchanged
+  });
+
+  it("setHelperAssignment fails with no helper, then sets a sticky daily job", () => {
+    const e = freshEngine();
+    expect(e.setHelperAssignment("shop")).toBe(false);
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "charming");
+    e.state.day = 4;
+    expect(e.setHelperAssignment("shop")).toBe(true);
+    expect(e.state.helper!.assignment).toBe("shop");
+    expect(e.state.helper!.assignmentDay).toBe(4);
+
+    // Sticky: unrelated ticks don't revert it on their own.
+    e.state.aiMode = "off";
+    for (let i = 0; i < 100; i++) e.tick(100);
+    expect(e.state.helper!.assignment).toBe("shop");
+
+    // Changing it again updates both fields.
+    e.state.day = 5;
+    expect(e.setHelperAssignment("adventure")).toBe(true);
+    expect(e.state.helper!.assignment).toBe("adventure");
+    expect(e.state.helper!.assignmentDay).toBe(5);
+  });
+});
+
+describe("chooseTrack permanence and the day-10 gate (#83)", () => {
+  it("rejects before day 10, and rejects with no helper at all", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "brave");
+    e.state.day = 9;
+    expect(e.chooseTrack("adventure")).toBe(false);
+    expect(e.state.helper!.track).toBe("none");
+
+    const noHelper = freshEngine();
+    noHelper.state.day = 20;
+    expect(noHelper.chooseTrack("adventure")).toBe(false);
+  });
+
+  it("rejects craft (Phase 4 stub) and the sentinel 'none' value", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
+    e.state.day = 10;
+    expect(e.chooseTrack("craft")).toBe(false);
+    expect(e.chooseTrack("none")).toBe(false);
+    expect(e.state.helper!.track).toBe("none"); // still unset — neither call took
+  });
+
+  it("succeeds once day 10+ is reached and is permanent (one-way)", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "charming");
+    e.state.day = 10;
+    expect(e.chooseTrack("shop")).toBe(true);
+    expect(e.state.helper!.track).toBe("shop");
+
+    // One-way: a later attempt to switch is rejected, even to a different value.
+    expect(e.chooseTrack("adventure")).toBe(false);
+    expect(e.state.helper!.track).toBe("shop");
+  });
+});
+
+describe("helper XP accrual at day rollover (#83)", () => {
+  it("adds a day's xp for the current assignment, x1.5 once the track matches the trait", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "charming");
+    e.setHelperAssignment("shop");
+    for (let i = 0; i < 600 * 10 + 50; i++) e.tick(100); // one day rollover
+    expect(e.state.helper!.xp).toBe(10); // no track chosen yet — no trait bonus
+
+    e.state.day = 10;
+    expect(e.chooseTrack("shop")).toBe(true); // matches the "charming" trait
+    for (let i = 0; i < 600 * 10 + 50; i++) e.tick(100);
+    expect(e.state.helper!.xp).toBe(10 + 15); // +10 * 1.5
+  });
+
+  it("suggestPrice stays null until level 3, shop-assigned", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "charming");
+    const item = makeItem("iron_sword");
+    expect(e.suggestPrice(item)).toBeNull(); // not on shop duty
+    e.setHelperAssignment("shop");
+    expect(e.suggestPrice(item)).toBeNull(); // level 1, below the L3 gate
+    e.state.helper!.level = 3;
+    expect(e.suggestPrice(item)).not.toBeNull();
+    e.setHelperAssignment("adventure");
+    expect(e.suggestPrice(item)).toBeNull(); // L3+ but not on shop duty today
+  });
+});
+
+describe("shop-track wait scaling touches the behavior timer (#83)", () => {
+  it("a level-5 shop-duty helper shortens the browsing wait; no helper leaves it unchanged", async () => {
+    const { freshContext, stepAdventurer } = await import("../entities/AdventurerBehavior");
+    const e = freshEngine();
+    e.state.phase = "morning";
+    const a = e.state.adventurers[0];
+    a.personality.spendingStyle = "careful"; // base browseTime = 8s (largest base, easiest to see scaling)
+
+    // No helper: full, unscaled wait.
+    a.state = "heading_to_shop";
+    const bcPlain = freshContext(); // target: null — walkToward resolves the arrival instantly
+    stepAdventurer(a, bcPlain, e.state, 0.1);
+    expect(a.state).toBe("browsing");
+    expect(bcPlain.timer).toBeCloseTo(8, 5);
+
+    // Level-5 shop-duty helper: 8 * (1 - 0.06*5) = 8 * 0.7 = 5.6s.
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "charming");
+    e.state.helper!.assignment = "shop";
+    e.state.helper!.level = 5;
+    a.state = "heading_to_shop";
+    const bcHelped = freshContext();
+    stepAdventurer(a, bcHelped, e.state, 0.1);
+    expect(a.state).toBe("browsing");
+    expect(bcHelped.timer).toBeCloseTo(8 * 0.7, 5);
+  });
+});
+
+describe("full-wipe helper-carry beat delivers to the player (#83)", () => {
+  it("credits gold and items to the player and announces the beat when a full-wipe script has helperAlong", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "brave");
+    e.setHelperAssignment("adventure");
+    // Neutralize every real adventurer this tick so nothing but the
+    // helper-carry beat can change gold/inventory — isolates the assertion
+    // to exactly the mechanism under test.
+    for (const a of e.state.adventurers) a.alive = false;
+
+    // A deterministic hopeless party (structuredClone keeps the same ids as
+    // partyIds so the beat's bookkeeping lines up with real adventurers,
+    // though those adventurers are inert this tick per above).
+    const buildParty = () =>
+      e.state.adventurers.map((a) => {
+        const clone = structuredClone(a);
+        clone.alive = true; // Combat.ts doesn't care, but keep it sane
+        clone.level = 1;
+        clone.hp = 5;
+        clone.maxHp = 5;
+        clone.equipment = {};
+        return clone;
+      });
+
+    let script: ReturnType<typeof generateAdventureScript> | null = null;
+    for (let seed = 0; seed < 200 && !script; seed++) {
+      const candidate = generateAdventureScript(buildParty(), 20, { seed, helper: { level: 4 } }, makeRng(seed));
+      const wiped = candidate.memberOutcomes.every((o) => !o.survived);
+      const hasGoldCarry = candidate.events.some((ev) => ev.type === "helperCarry" && (ev.value ?? 0) > 0);
+      if (wiped && hasGoldCarry) script = candidate;
+    }
+    expect(script).not.toBeNull();
+    const carryEvents = script!.events.filter((ev) => ev.type === "helperCarry");
+    const expectedGold = carryEvents.reduce((n, ev) => n + (ev.value ?? 0), 0);
+    const expectedItemCount = carryEvents.filter((ev) => ev.itemName).length;
+
+    const goldBefore = e.state.gold;
+    const itemCountBefore = e.state.shelves.filter(Boolean).length + e.state.inventory.length;
+
+    e.state.currentScript = script;
+    e.state.phase = "afternoon";
+    e.state.timeOfDay = 0.59; // PHASE_BOUNDS.afternoon = [0.35, 0.6)
+    e.state.speed = 1;
+    e.tick(10_000); // crosses into evening ([0.6, 0.8)) in one step
+
+    expect(e.state.phase).toBe("evening");
+    expect(e.state.gold).toBe(goldBefore + expectedGold);
+    const itemCountAfter = e.state.shelves.filter(Boolean).length + e.state.inventory.length;
+    expect(itemCountAfter - itemCountBefore).toBe(expectedItemCount);
+    expect(e.state.messages.some((m) => m.content.includes("didn't make it back"))).toBe(true);
+  });
+
+  it("without a helper along, a full-wipe script never emits helperCarry or credits the player", () => {
+    const e = freshEngine();
+    // No createCharacters call — s.helper stays null throughout.
+    for (const a of e.state.adventurers) a.alive = false;
+    const buildParty = () =>
+      e.state.adventurers.map((a) => {
+        const clone = structuredClone(a);
+        clone.level = 1;
+        clone.hp = 5;
+        clone.maxHp = 5;
+        clone.equipment = {};
+        return clone;
+      });
+    let script: ReturnType<typeof generateAdventureScript> | null = null;
+    for (let seed = 0; seed < 100 && !script; seed++) {
+      const candidate = generateAdventureScript(buildParty(), 20, { seed }, makeRng(seed));
+      if (candidate.memberOutcomes.every((o) => !o.survived)) script = candidate;
+    }
+    expect(script).not.toBeNull();
+    expect(script!.events.some((ev) => ev.type === "helperCarry")).toBe(false);
+
+    const goldBefore = e.state.gold;
+    e.state.currentScript = script;
+    e.state.phase = "afternoon";
+    e.state.timeOfDay = 0.59;
+    e.state.speed = 1;
+    e.tick(10_000);
+
+    expect(e.state.gold).toBe(goldBefore);
+    expect(e.state.messages.some((m) => m.content.includes("didn't make it back"))).toBe(false);
+  });
+});
+
+describe("helper save/load round-trip (#83)", () => {
+  it("round-trips helper, shopkeeperAppearance, and currentScript.helperAlong", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 2, hair: 1 }, "Robin", { skin: 1, hair: 4 }, "curious");
+    e.setHelperAssignment("adventure");
+    e.state.day = 10;
+    e.chooseTrack("adventure");
+    e.state.helper!.xp = 123;
+    e.state.helper!.level = 3;
+    e.state.currentScript = generateAdventureScript(
+      e.state.adventurers,
+      e.state.day,
+      { seed: 1, helper: { level: 3 } },
+      makeRng(1),
+    );
+    saveGame(e.state);
+    const loaded = loadGame();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.helper).toEqual(e.state.helper);
+    expect(loaded!.shopkeeperAppearance).toEqual({ skin: 2, hair: 1 });
+    expect(loaded!.currentScript!.helperAlong).toBe(true);
+  });
+
+  it("defaults helper/shopkeeperAppearance to null and old scripts' helperAlong to false", () => {
+    const e = freshEngine();
+    e.state.currentScript = generateAdventureScript(e.state.adventurers, 1, { seed: 2 }, makeRng(2));
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    delete raw.helper;
+    delete raw.shopkeeperAppearance;
+    delete raw.currentScript.helperAlong; // pre-#83 script shape
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadGame();
+    expect(loaded!.helper).toBeNull();
+    expect(loaded!.shopkeeperAppearance).toBeNull();
+    expect(loaded!.currentScript!.helperAlong).toBe(false);
   });
 });

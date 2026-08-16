@@ -37,6 +37,9 @@ export function loadGame(): GameState | null {
     state.merchant ??= null;
     state.pricingHistory ??= [];
     state.currentScript ??= null; // AdventureScript (spec V2.5, issue #76); old saves never had a mid-script save anyway
+    if (state.currentScript) state.currentScript.helperAlong ??= false; // spec V2.7, issue #83
+    state.helper ??= null; // spec V2.7, issue #83
+    state.shopkeeperAppearance ??= null; // spec V2.7, issue #83
     for (const a of state.adventurers) {
       a.browsingItemId ??= null;
       a.memory.lowMoraleDays ??= 0;

@@ -9,6 +9,7 @@ import { recordReactionSeen, recordSale, recordWalkout } from "../game/Ledger";
 import { resolveAdventure, generateAdventureScript, fallbackAskPrice } from "../game/Combat";
 import { makeRng } from "../utils/rng";
 import { makeItem } from "./Item";
+import { browseSpeedFactor } from "./Helper";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
 import { getBuilding } from "../utils/TownBuildings";
 
@@ -102,6 +103,12 @@ export function stepAdventurer(
   const out: StepResult = { messages: [], outcome: null };
   if (!a.alive) return out;
   bc.timer = Math.max(0, bc.timer - dt);
+  // Shop-track queue speed-up (spec V2.7, issue #83): the ONE call this
+  // machine makes into helper territory — a pure read of GameState that
+  // returns exactly 1 (no-op) whenever there's no helper on shop duty
+  // today. Multiplied into every browsing/decision wait below; nothing
+  // else here needs to know a helper exists.
+  const waitSpeed = browseSpeedFactor(s);
 
   switch (a.state) {
     case "resting": {
@@ -196,7 +203,7 @@ export function stepAdventurer(
     case "heading_to_shop": {
       if (walkToward(a, bc, dt)) {
         a.state = "browsing";
-        bc.timer = browseTime(a);
+        bc.timer = browseTime(a) * waitSpeed;
         bc.browsingItem = pickShelfItem(a, s);
         a.browsingItemId = bc.browsingItem;
       }
@@ -209,7 +216,7 @@ export function stepAdventurer(
       if (item && item.salePrice !== null) recordReactionSeen(s, computeReaction(a, item));
       if (item && decidesToBuy(a, item)) {
         a.state = "buying";
-        bc.timer = 2.5;
+        bc.timer = 2.5 * waitSpeed;
       } else {
         if (item) recordReaction(a, item, out, s);
         // Careful shoppers examine a second item; others leave.
@@ -217,7 +224,7 @@ export function stepAdventurer(
         if (a.personality.spendingStyle === "careful" && next) {
           bc.browsingItem = next;
           a.browsingItemId = next;
-          bc.timer = browseTime(a);
+          bc.timer = browseTime(a) * waitSpeed;
         } else {
           leaveShop(a, bc, s);
         }

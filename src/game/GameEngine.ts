@@ -2,7 +2,16 @@
 // behavior state machine; Haiku steers daily plans asynchronously with a
 // deterministic fallback always in place (spec §7).
 
-import type { Adventurer, AdventurerClass, AdventureOutcome, GameState } from "../types";
+import type {
+  Adventurer,
+  AdventurerClass,
+  AdventureOutcome,
+  GameState,
+  HelperAssignment,
+  HelperTrack,
+  HelperTrait,
+  Item,
+} from "../types";
 import { advanceTime, phaseFor } from "./DayNightCycle";
 import { generateUniqueName } from "../utils/names";
 import { loadBudget } from "../utils/TokenBudget";
@@ -12,6 +21,7 @@ import { elapsedOfflineDays, runOfflineSim } from "./OfflineSim";
 import { arrivalBonus, processDayEnd } from "./MoraleSystem";
 import { generateAdventureScript } from "./Combat";
 import { makeRng } from "../utils/rng";
+import { accrueXp, createHelper, suggestPriceFor } from "../entities/Helper";
 import { freshLedger, recordDonation, recordLootBuy, recordRestock, rotateLedger } from "./Ledger";
 import {
   fallbackReply,
@@ -93,6 +103,15 @@ export class GameEngine {
     if (prevPhase !== "afternoon" && s.phase === "afternoon") {
       this.formAfternoonParty();
     }
+    // Full-wipe helper-carry beat (spec V2.7, issue #83): fires once, right
+    // as the day crosses into evening — the same "facts are final at
+    // generation, applied at the evening beat" timing every other
+    // per-member script outcome already resolves at (AdventurerBehavior's
+    // "adventuring" case, below). A wiped party has nobody left to run that
+    // per-member path, so this is the one place that beat lands.
+    if (prevPhase !== "evening" && s.phase === "evening") {
+      this.resolveHelperWipeCarry();
+    }
 
     const dt = (deltaMs / 1000) * s.speed;
     const dayRolled = t >= 1;
@@ -133,7 +152,56 @@ export class GameEngine {
     // Seed drawn live (spec V2.5: liveliness) but stored on the script so
     // any replay — a reload mid-afternoon, a future server — is exact.
     const seed = Math.floor(Math.random() * 2 ** 31);
-    s.currentScript = generateAdventureScript(party, s.day, { seed }, makeRng(seed));
+    // Adventure-track helper (spec V2.7, issue #83): tags along only when a
+    // real party is already marching — a "tag-along" needs a party to tag
+    // along WITH. `undefined` (helper null/unassigned) reproduces pre-#83
+    // scripts byte-for-byte — see Combat.ts's generateAdventureScript doc.
+    const helperOpts =
+      s.helper && s.helper.assignment === "adventure" ? { level: s.helper.level } : undefined;
+    s.currentScript = generateAdventureScript(party, s.day, { seed, helper: helperOpts }, makeRng(seed));
+  }
+
+  /** Full-wipe beat (spec V2.7, issue #83): reads the `helperCarry` events
+   *  Combat.ts attached at script generation and delivers them to the
+   *  PLAYER directly — nobody in the party survived to carry their own
+   *  loot home. No-op when nobody adventured, nobody wiped, or the helper
+   *  wasn't along; also the one place that records "was today a wipe day"
+   *  for the adventure-track XP doubling `onNewDay()` applies at rollover. */
+  private resolveHelperWipeCarry(): void {
+    const s = this.state;
+    const script = s.currentScript;
+    if (!script) return;
+    const wiped = script.events.some((e) => e.type === "defeat");
+    this.helperWipeToday = wiped && script.helperAlong;
+    if (!wiped || !script.helperAlong || !s.helper) return;
+
+    let totalGold = 0;
+    const items: string[] = [];
+    for (const e of script.events) {
+      if (e.type !== "helperCarry") continue;
+      if (e.value) totalGold += e.value;
+      if (e.itemName) items.push(e.itemName);
+    }
+    s.gold += totalGold;
+    for (const key of items) {
+      const item = makeItem(key);
+      const empty = s.shelves.findIndex((slot) => slot === null);
+      if (empty !== -1) s.shelves[empty] = item;
+      else s.inventory.push(item);
+    }
+    const spoils =
+      totalGold > 0 || items.length > 0
+        ? ` — dragged home ${totalGold}g and ${items.length} item${items.length === 1 ? "" : "s"} the party never got to spend.`
+        : ", empty-handed but alive.";
+    this.pushMessage({
+      id: `sys-helper-wipe-${s.day}`,
+      senderId: "system",
+      senderName: "Town",
+      type: "system",
+      content: `The party didn't make it back today. ${s.helper.name} did${spoils}`,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
   }
 
   // ---------- Phase 4: adventure outcomes, death, arrivals, loot offers ----------
@@ -192,11 +260,28 @@ export class GameEngine {
   /** Wipe stabilizer accumulator (spec V2.6): deaths since the last
    *  replacement wave landed; sizes and hastens the next one. */
   private deathsSinceLastArrival = 0;
+  /** Set by resolveHelperWipeCarry() when today's script was a full wipe
+   *  with the helper along; consumed once at the next onNewDay() rollover
+   *  to double that day's adventure-track XP (spec V2.7, issue #83). */
+  private helperWipeToday = false;
 
   private onNewDay(): void {
     const s = this.state;
     rotateLedger(s, s.day); // close yesterday's book before anything else
     s.currentScript = null; // the day's party script doesn't survive rollover (spec V2.5)
+
+    // Helper XP accrual (spec V2.7, issue #83): once per rollover, off
+    // whatever the sticky `assignment` was through the day that just ended
+    // (nothing resets assignment mid-day, so it still reflects yesterday's
+    // work at this point). Doubled if today closed out a full-wipe day the
+    // adventure-track helper carried loot home from.
+    if (s.helper) {
+      const { xp, level } = accrueXp(s.helper, { wipeDay: this.helperWipeToday });
+      s.helper.xp = xp;
+      s.helper.level = level;
+    }
+    this.helperWipeToday = false;
+
     saveGame(s); // auto-save at the day rollover (§12)
     // Loot offers don't survive the night.
     s.lootOffers = s.lootOffers.filter((o) => o.day >= s.day);
@@ -273,6 +358,64 @@ export class GameEngine {
         });
       }
     }
+  }
+
+  // ---------- Phase 3: helper entity + tracks (spec V2.7, issue #83) ----------
+  // Small, delegating wrappers — the actual math/factory lives in
+  // src/entities/Helper.ts (issue #83's own constraint: "keep GameEngine's
+  // additions small and delegating").
+
+  /** One-time character creation. Creation UI is issue #84's job; this is
+   *  the deterministic entity/state its picks produce. Returns false if a
+   *  helper already exists (creation only ever happens once per save). */
+  createCharacters(
+    shopkeeperAppearance: { skin: number; hair: number },
+    helperName: string,
+    helperAppearance: { skin: number; hair: number },
+    trait: HelperTrait,
+  ): boolean {
+    const s = this.state;
+    if (s.helper) return false;
+    s.shopkeeperAppearance = shopkeeperAppearance;
+    s.helper = createHelper(helperName, helperAppearance, trait, s.day);
+    return true;
+  }
+
+  /** Today's job (spec V2.7): one per day, sticky until this is called
+   *  again. All three jobs are choosable from day 1 — "days 1-10" gates
+   *  the PERMANENT track choice below, not which daily job is available;
+   *  see the PR body for the full reasoning (the issue's own shop/adventure
+   *  effect rules key off `assignment`, not `track`). */
+  setHelperAssignment(assignment: HelperAssignment): boolean {
+    const s = this.state;
+    if (!s.helper) return false;
+    s.helper.assignment = assignment;
+    s.helper.assignmentDay = s.day;
+    return true;
+  }
+
+  /** Permanent, one-way specialization (spec V2.7): unlocks day 10+;
+   *  "craft" is rejected until Phase 4 actually builds it out (V2.15 note —
+   *  the UI shows it locked on a false return). Already having a track
+   *  chosen makes this a no-op false — the choice can't be revisited. */
+  chooseTrack(track: HelperTrack): boolean {
+    const s = this.state;
+    if (!s.helper) return false;
+    if (s.day < 10) return false;
+    if (s.helper.track !== "none") return false;
+    if (track === "none" || track === "craft") return false;
+    s.helper.track = track;
+    return true;
+  }
+
+  /** Deterministic pricing recommendation (spec V2.7, L3+ shop track only)
+   *  — a recommendation surface for the pricing panel, NEVER an
+   *  Economy.ts §6 input. Null whenever there's no helper eligible for it
+   *  right now (no helper, not on shop duty today, or under level 3). */
+  suggestPrice(item: Item): number | null {
+    const s = this.state;
+    if (!s.helper || s.helper.assignment !== "shop" || s.helper.level < 3) return null;
+    return suggestPriceFor(s.pricingHistory, item);
   }
 
   // ---------- v1 completion: pricing API, wholesale, save, game over ----------
@@ -606,6 +749,8 @@ function createInitialState(): GameState {
     reputation: 0,
     buildings: defaultBuildings(),
     currentScript: null,
+    helper: null,
+    shopkeeperAppearance: null,
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
