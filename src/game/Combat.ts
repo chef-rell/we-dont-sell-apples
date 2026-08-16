@@ -3,10 +3,19 @@
 // adventurer stats. Produces concrete results the AI narrates (step two) and
 // the Wilderness View animates. Neither can alter what's decided here.
 
-import type { Adventurer, AdventureOutcome, AdventureScript, AdventureScriptEvent, WildernessArea } from "../types";
+import type {
+  Adventurer,
+  AdventureOutcome,
+  AdventureScript,
+  AdventureScriptEvent,
+  Enchantment,
+  LootRoll,
+  WildernessArea,
+} from "../types";
 import { MONSTERS, encounterFor, type MonsterDef } from "../entities/Monster";
 import { DURABILITY_LOSS_MIN, DURABILITY_LOSS_MAX } from "../utils/constants";
 import { helperCombatPower } from "../entities/Helper";
+import { rollLootEnchantments, rollLootRarity } from "../entities/Item";
 
 /** Adventurer combat power from level + gear (spec §7 death factors). */
 export function combatPower(a: Adventurer): number {
@@ -103,6 +112,11 @@ export function resolveAdventure(
     goldFound,
     narration: null, // AI narration attaches async; fallback leaves it null
     brokenItems,
+    // spec V2.9/issue #90: this v1 fallback path (stragglers/night runs)
+    // doesn't roll rarity — see generateAdventureScript below, the scoped
+    // location for that per the issue. Shape-consistent common-rarity,
+    // no-enchant entries so every AdventureOutcome always has lootRolls.
+    lootRolls: lootItemKeys.map((key) => ({ key, rarity: "common", enchantments: [] })),
   };
 }
 
@@ -226,6 +240,51 @@ function pickRandom<T>(pool: T[], n: number, rng: () => number): T[] {
   return picked;
 }
 
+// ---------- Enchantment combat effects (spec V2.9, issue #90) ----------
+//
+// Scoped to generateAdventureScript ONLY (the issue's stated location) —
+// v1's resolveAdventure() fallback path (stragglers/night runs) is
+// untouched, matching that function's loot-rarity scope decision above.
+// Each effect is read fresh per encounter from CURRENTLY EQUIPPED, unbroken
+// gear (durability !== 0) — an enchant on gear that broke mid-script stops
+// contributing immediately, same rule combatPower() already applies to
+// quality.
+
+const ENCHANT_POWER_BONUS = 3; // +3 power per enchant on equipped gear, any slot
+const FLAME_DAMAGE_BONUS = 2; // +2 encounter power, specifically for flame, vs monsters
+const LIFESTEAL_HEAL = 3; // heals 3 per WON encounter
+const WARDING_MITIGATION = 2; // +2 damage mitigation (stacks with armor quality)
+const VIGOR_MAX_HP_BONUS = 5; // +5 maxHp while equipped
+
+/** All enchantments on a member's currently-equipped, unbroken gear
+ *  (weapon/armor/accessory) — the pool every effect below reads from. */
+function equippedEnchantments(a: Adventurer): Enchantment[] {
+  const out: Enchantment[] = [];
+  for (const slot of ["weapon", "armor", "accessory"] as const) {
+    const gear = a.equipment[slot];
+    if (gear && gear.durability !== 0) out.push(...gear.enchantments);
+  }
+  return out;
+}
+
+/** +3 power per equipped enchant (spec V2.9) — read into this encounter's
+ *  power sum, see the `power` computation in the encounter loop below. */
+function enchantPowerBonus(a: Adventurer): number {
+  return equippedEnchantments(a).length * ENCHANT_POWER_BONUS;
+}
+
+/** Flame's extra +2 "encounter damage vs monsters" (spec V2.9) — modeled as
+ *  additional power for THIS encounter's win-chance roll, on top of the
+ *  generic +3/enchant above (so one flame enchant is worth +5 power total:
+ *  +3 generic, +2 flame-specific). Read into the same `power` computation. */
+function flamePowerBonus(a: Adventurer): number {
+  return equippedEnchantments(a).includes("flame") ? FLAME_DAMAGE_BONUS : 0;
+}
+
+function hasEnchant(a: Adventurer, e: Enchantment): boolean {
+  return equippedEnchantments(a).includes(e);
+}
+
 /**
  * Generate a whole party's afternoon in one seeded pass (spec V2.5/V2.6).
  * `opts.seed` is stored on the returned script for exact replay; the caller
@@ -273,9 +332,15 @@ export function generateAdventureScript(
   const events: AdventureScriptEvent[] = [{ t: 0, type: "march", value: size }];
 
   const aliveIds = new Set(partyIds);
-  const hp = new Map(party.map((a) => [a.id, a.hp]));
+  // Vigor (spec V2.9, issue #90): "+5 maxHp while equipped" — added to each
+  // vigor-carrying member's starting HP pool for this script, a buffer on
+  // top of their real a.hp/a.maxHp (which never change here; the final
+  // damageTaken clamp below still bounds against the real a.hp). effectiveMaxHp
+  // is also lifesteal's healing ceiling for this member, below.
+  const effectiveMaxHp = new Map(party.map((a) => [a.id, a.maxHp + (hasEnchant(a, "vigor") ? VIGOR_MAX_HP_BONUS : 0)]));
+  const hp = new Map(party.map((a) => [a.id, a.hp + (hasEnchant(a, "vigor") ? VIGOR_MAX_HP_BONUS : 0)]));
   const goldById = new Map<string, number>(party.map((a) => [a.id, 0]));
-  const lootById = new Map<string, string[]>(party.map((a) => [a.id, []]));
+  const lootById = new Map<string, LootRoll[]>(party.map((a) => [a.id, []]));
   const brokenById = new Map<string, string[]>(party.map((a) => [a.id, []]));
   const damageById = new Map<string, number>(party.map((a) => [a.id, 0]));
   const lastMonsterById = new Map<string, string>();
@@ -290,7 +355,13 @@ export function generateAdventureScript(
     const nextT = () => (subT = Math.min(subT + 0.001, encT + 0.02));
 
     const aliveMembers = party.filter((a) => aliveIds.has(a.id));
-    const power = partyPower(aliveMembers, helperPower, helperAlong);
+    // Enchant power (spec V2.9, issue #90): added AFTER partyPower's
+    // diversity multiplier — flat per-encounter contributions, not scaled
+    // by party composition (kept separate from partyPower() itself so v1's
+    // shared combatPower()/partyPower() stay byte-identical for callers
+    // that never touch enchantments).
+    const enchantPower = aliveMembers.reduce((n, m) => n + enchantPowerBonus(m) + flamePowerBonus(m), 0);
+    const power = partyPower(aliveMembers, helperPower, helperAlong) + enchantPower;
     // Balance guardrail (issue #76): threat scales 1:1 with a solo party
     // (coefficient exactly 1 at size 1 — identical to v1's unscaled
     // monsterThreat) and steeper than power grows per extra member beyond
@@ -311,9 +382,9 @@ export function generateAdventureScript(
     const targets = pickRandom(aliveMembers, targetCount, rng);
     for (const target of targets) {
       const armorQ =
-        target.equipment.armor && target.equipment.armor.durability !== 0
+        (target.equipment.armor && target.equipment.armor.durability !== 0
           ? target.equipment.armor.quality
-          : 0;
+          : 0) + (hasEnchant(target, "warding") ? WARDING_MITIGATION : 0); // spec V2.9, issue #90
       const baseDamage = won
         ? monster.damage * (0.6 + rng() * 0.6)
         : monster.damage * (1.2 + rng() * 0.8);
@@ -356,6 +427,18 @@ export function generateAdventureScript(
 
     if (won) {
       const survivors = party.filter((a) => aliveIds.has(a.id));
+      // Lifesteal (spec V2.9, issue #90): heals 3 per WON encounter, for
+      // every alive member with lifesteal equipped. Applied to both the
+      // hp map (capped at effectiveMaxHp, which already includes any vigor
+      // bonus) and damageById (so the final damageTaken reported in
+      // memberOutcomes reflects the heal, not just raw cumulative hits).
+      for (const s of survivors) {
+        if (!hasEnchant(s, "lifesteal")) continue;
+        const cap = effectiveMaxHp.get(s.id)!;
+        const healed = Math.min(cap, hp.get(s.id)! + LIFESTEAL_HEAL) - hp.get(s.id)!;
+        hp.set(s.id, hp.get(s.id)! + healed);
+        damageById.set(s.id, Math.max(0, damageById.get(s.id)! - healed));
+      }
       const goldTotal = Math.round(monster.hp * (0.5 + rng() * 0.5) * (night ? 1.6 : 1));
       if (survivors.length > 0 && goldTotal > 0) {
         const share = Math.floor(goldTotal / survivors.length);
@@ -376,8 +459,20 @@ export function generateAdventureScript(
       for (let r = 0; r < rolls && survivors.length > 0; r++) {
         const itemKey = monster.lootTable[Math.floor(rng() * monster.lootTable.length)];
         const recipient = survivors[Math.floor(rng() * survivors.length)];
-        lootById.get(recipient.id)!.push(itemKey);
-        events.push({ t: nextT(), type: "lootDrop", actorId: recipient.id, itemName: itemKey });
+        // Rarity/enchantment rolls (spec V2.9, issue #90): the script's
+        // seeded rng ONLY — same seed always reproduces the same rarity and
+        // enchantments for every drop, in generation order.
+        const rarity = rollLootRarity(day, rng);
+        const enchantments = rollLootEnchantments(rarity, rng);
+        lootById.get(recipient.id)!.push({ key: itemKey, rarity, enchantments });
+        events.push({
+          t: nextT(),
+          type: "lootDrop",
+          actorId: recipient.id,
+          itemName: itemKey,
+          itemRarity: rarity,
+          itemEnchantments: enchantments,
+        });
       }
     }
   }
@@ -401,25 +496,35 @@ export function generateAdventureScript(
     for (const id of partyIds) totalGold += goldById.get(id) ?? 0;
     if (totalGold > 0) events.push({ t: carryT, type: "helperCarry", value: totalGold });
     for (const id of partyIds) {
-      for (const itemKey of lootById.get(id) ?? []) {
-        events.push({ t: carryT, type: "helperCarry", itemName: itemKey });
+      for (const roll of lootById.get(id) ?? []) {
+        events.push({
+          t: carryT,
+          type: "helperCarry",
+          itemName: roll.key,
+          itemRarity: roll.rarity,
+          itemEnchantments: roll.enchantments,
+        });
       }
     }
   }
 
-  const memberOutcomes: AdventureOutcome[] = party.map((a) => ({
-    adventurerId: a.id,
-    area,
-    day,
-    monsterName: lastMonsterById.get(a.id) ?? lineup[lineup.length - 1].name,
-    monsterDefeated: lastWonById.get(a.id) ?? finalWon,
-    damageTaken: Math.min(damageById.get(a.id) ?? 0, a.hp),
-    survived: aliveIds.has(a.id),
-    lootItemKeys: lootById.get(a.id) ?? [],
-    goldFound: goldById.get(a.id) ?? 0,
-    narration: null,
-    brokenItems: brokenById.get(a.id) ?? [],
-  }));
+  const memberOutcomes: AdventureOutcome[] = party.map((a) => {
+    const rolls = lootById.get(a.id) ?? [];
+    return {
+      adventurerId: a.id,
+      area,
+      day,
+      monsterName: lastMonsterById.get(a.id) ?? lineup[lineup.length - 1].name,
+      monsterDefeated: lastWonById.get(a.id) ?? finalWon,
+      damageTaken: Math.min(damageById.get(a.id) ?? 0, a.hp),
+      survived: aliveIds.has(a.id),
+      lootItemKeys: rolls.map((r) => r.key),
+      goldFound: goldById.get(a.id) ?? 0,
+      narration: null,
+      brokenItems: brokenById.get(a.id) ?? [],
+      lootRolls: rolls,
+    };
+  });
 
   return {
     id: `script-${day}-${night ? "night" : "day"}-${seed}`,

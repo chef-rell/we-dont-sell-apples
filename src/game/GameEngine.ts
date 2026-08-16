@@ -6,11 +6,13 @@ import type {
   Adventurer,
   AdventurerClass,
   AdventureOutcome,
+  Enchantment,
   GameState,
   HelperAssignment,
   HelperTrack,
   HelperTrait,
   Item,
+  ItemRarity,
 } from "../types";
 import { advanceTime, phaseFor } from "./DayNightCycle";
 import { generateUniqueName } from "../utils/names";
@@ -176,15 +178,19 @@ export class GameEngine {
     if (!wiped || !script.helperAlong || !s.helper) return;
 
     let totalGold = 0;
-    const items: string[] = [];
+    const items: { key: string; rarity: ItemRarity; enchantments: Enchantment[] }[] = [];
     for (const e of script.events) {
       if (e.type !== "helperCarry") continue;
       if (e.value) totalGold += e.value;
-      if (e.itemName) items.push(e.itemName);
+      // itemRarity/itemEnchantments travel on the event itself (spec V2.9,
+      // issue #90) — this is the one loot-materialization path with no
+      // surviving memberOutcome.lootRolls to read from (nobody made it
+      // home), so the roll has to ride along on helperCarry directly.
+      if (e.itemName) items.push({ key: e.itemName, rarity: e.itemRarity ?? "common", enchantments: e.itemEnchantments ?? [] });
     }
     s.gold += totalGold;
-    for (const key of items) {
-      const item = makeItem(key);
+    for (const it of items) {
+      const item = makeItem(it.key, { rarity: it.rarity, enchantments: it.enchantments, origin: "loot" });
       const empty = s.shelves.findIndex((slot) => slot === null);
       if (empty !== -1) s.shelves[empty] = item;
       else s.inventory.push(item);

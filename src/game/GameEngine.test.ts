@@ -218,6 +218,80 @@ describe("save/load", () => {
     expect(loaded!.buildings.some((b) => b.id === "shop")).toBe(true);
     expect(loaded!.buildings.some((b) => b.id === "gate")).toBe(true);
   });
+
+  // ---------- spec V2.9, issue #90: rarity/enchantments/origin/lootRolls ----------
+
+  it("defaults rarity/enchantments/origin on items for a save written before #90", () => {
+    const e = freshEngine();
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    for (const it of raw.shelves) {
+      if (!it) continue;
+      delete it.rarity;
+      delete it.enchantments;
+      delete it.origin;
+    }
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadGame();
+    for (const it of loaded!.shelves) {
+      if (!it) continue;
+      expect(it.rarity).toBe("common");
+      expect(it.enchantments).toEqual([]);
+      expect(it.origin).toBe("stock");
+    }
+  });
+
+  it("defaults lootRolls on recentOutcomes for a save written before #90, mapped from lootItemKeys", () => {
+    const e = freshEngine();
+    e.state.recentOutcomes.push({
+      adventurerId: e.state.adventurers[0].id,
+      area: "forest_edge",
+      day: 1,
+      monsterName: "Goblin Scavenger",
+      monsterDefeated: true,
+      damageTaken: 3,
+      survived: true,
+      lootItemKeys: ["stolen_trinket", "rusty_dagger"],
+      goldFound: 5,
+      narration: null,
+      brokenItems: [],
+      lootRolls: [
+        { key: "stolen_trinket", rarity: "rare", enchantments: ["flame"] },
+        { key: "rusty_dagger", rarity: "common", enchantments: [] },
+      ],
+    });
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    delete raw.recentOutcomes[0].lootRolls; // simulate a pre-#90 save
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadGame();
+    expect(loaded!.recentOutcomes[0].lootRolls).toEqual([
+      { key: "stolen_trinket", rarity: "common", enchantments: [] },
+      { key: "rusty_dagger", rarity: "common", enchantments: [] },
+    ]);
+  });
+
+  it("defaults lootRolls on a mid-script currentScript's memberOutcomes for a save written before #90", () => {
+    const e = freshEngine();
+    for (const a of e.state.adventurers) {
+      a.daysSinceLastAdventure = 99;
+      a.gold = 0;
+    }
+    let sawScript = false;
+    for (let i = 0; i < 6000 && !sawScript; i++) {
+      e.tick(100);
+      if (e.state.currentScript) sawScript = true;
+    }
+    expect(sawScript).toBe(true);
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    for (const o of raw.currentScript.memberOutcomes) delete o.lootRolls;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadGame();
+    for (const o of loaded!.currentScript!.memberOutcomes) {
+      expect(o.lootRolls).toEqual(o.lootItemKeys.map((key) => ({ key, rarity: "common", enchantments: [] })));
+    }
+  });
 });
 
 describe("game over", () => {
@@ -617,6 +691,7 @@ describe("wipe stabilizer (#76, spec V2.6)", () => {
         goldFound: 0,
         brokenItems: [],
         narration: null,
+        lootRolls: [],
       });
     }
     e["replacementDueDay"] = e.state.day + 1; // wave due at the next rollover
