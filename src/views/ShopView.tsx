@@ -82,8 +82,10 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
     setSel(null); // clicked the room, not a shelf
   };
 
+  // Route pricing through the engine (#10) so it records the pricing history
+  // the §13 auto-pilot infers the player's style from.
   const setPrice = (price: number | null) => {
-    if (sel) sel.item.salePrice = price;
+    if (sel) engine.setPrice(sel.item.id, price);
   };
 
   return (
