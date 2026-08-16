@@ -506,6 +506,7 @@ function createInitialState(): GameState {
   }
 
   return {
+    saveVersion: 1,
     day: 1,
     // Open at dawn, not straight into the morning rush: §4 gives dawn to the
     // player to price the shelves before the first customer moves (#50).
@@ -528,6 +529,7 @@ function createInitialState(): GameState {
     lastSalePriceByName: {},
     autoPilotEnabled: false,
     offlineSummary: null,
+    reputation: 0,
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,

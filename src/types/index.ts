@@ -259,6 +259,10 @@ export type GameView = "town" | "shop" | "wilderness" | "gameover";
 // ---------- Root state ----------
 
 export interface GameState {
+  /** Save-shape version (spec V2.11). v1 saves = 1, key `wdsa_save_v1`;
+   *  v2 will bump to 2 under a new key (`wdsa_save_v2`) — v1 saves are
+   *  never read, migrated, or deleted by v2 code. */
+  saveVersion: number;
   day: number;
   timeOfDay: number; // 0-1 through the day cycle
   phase: DayPhase;
@@ -279,6 +283,7 @@ export interface GameState {
   pricingHistory: PriceRecord[]; // player price-setting log (auto-pilot learns from this)
   autoPilotEnabled: boolean; // player toggle (§13); offline sim uses it regardless
   offlineSummary: OfflineSummary | null; // set on load after an away period; UI clears it
+  reputation: number; // -1..1, shop's town-wide reputation (spec V2.9); recomputed and persisted each rollover
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

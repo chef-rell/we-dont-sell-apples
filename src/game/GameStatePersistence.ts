@@ -25,6 +25,8 @@ export function loadGame(): GameState | null {
     // Minimal sanity check — a corrupt save is worse than a fresh start.
     if (typeof state.day !== "number" || !Array.isArray(state.adventurers)) return null;
     // Forward-compat: fields added after a save was written get defaults.
+    state.saveVersion ??= 1;
+    state.reputation ??= 0;
     state.lootOffers ??= [];
     state.recentOutcomes ??= [];
     state.merchant ??= null;
