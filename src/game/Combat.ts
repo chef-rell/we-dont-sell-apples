@@ -56,6 +56,11 @@ export function resolveAdventure(a: Adventurer, day: number): AdventureOutcome {
     }
   }
 
+  // Gold: the wilderness is the economy's faucet. Without it the town's
+  // money supply is fixed and sales stall once adventurers go broke
+  // (found via scripts/balance-report.ts). Scales with monster toughness.
+  const goldFound = won ? Math.round(monster.hp * (0.5 + Math.random() * 0.5)) : 0;
+
   return {
     adventurerId: a.id,
     area,
@@ -65,6 +70,7 @@ export function resolveAdventure(a: Adventurer, day: number): AdventureOutcome {
     damageTaken: Math.min(damageTaken, a.hp),
     survived,
     lootItemKeys,
+    goldFound,
     narration: null, // AI narration attaches async; fallback leaves it null
   };
 }

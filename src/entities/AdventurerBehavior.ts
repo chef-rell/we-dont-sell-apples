@@ -190,6 +190,7 @@ export function stepAdventurer(
           break;
         }
 
+        a.gold += outcome.goldFound;
         // Loot into inventory; remember what's for sale.
         for (const key of outcome.lootItemKeys) {
           const item = makeItem(key);
