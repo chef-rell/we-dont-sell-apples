@@ -18,23 +18,38 @@ import { WholesalePanel } from "../ui/WholesalePanel";
 import type { Adventurer, GameState, Item } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 
-// Shelf grid layout (12 slots at shop level 1 = 3 rows × 4 columns).
-const COLS = 4;
+// Shelf grid. The shop grows with shopLevel (12 → 16 → 20 → 24 slots, §5), so
+// the grid is derived from however many slots state.shelves actually has:
+// three rows always, columns as wide as the room allows.
 const ROWS = 3;
-const SLOT_W = 190;
+const GRID_MARGIN = 40; // room left either side of the shelving
 const SLOT_H = 128;
-const GRID_X = 120; // left of the first column
 const GRID_Y = 96; // top of the first row
 const ICON_SCALE = 2; // shelf icons drawn at 2× for readability
 const ICON_PX = ICON_CELL * PX * ICON_SCALE; // on-screen icon footprint
 
 // Where customers stand: the open floor in front of the counter, one spot per
-// shelf column. Beyond four, they queue up a row further back (drawn first, so
-// the front row overlaps them) offset half a slot, keeping a crowd readable.
+// shelf column, so a customer stands under the item they're examining. Past
+// that, they queue up a row further back (drawn first, so the front row
+// overlaps them) offset half a slot, keeping a crowd readable.
 const CHAR_H = 64; // drawCharacter's sprite height in world px
 const AISLE_FRONT_Y = 604; // feet line, front row (name plate sits below it)
 const AISLE_BACK_Y = 568; // feet line, back row
-const CUSTOMER_SPOT_X = [0, 1, 2, 3].map((col) => slotRect(col, 0).x + SLOT_W / 2);
+
+export interface ShelfLayout {
+  cols: number;
+  slotW: number;
+}
+
+/** Grid geometry for a given slot count. Never narrower than the level-1 shop. */
+export function shelfLayout(slotCount: number): ShelfLayout {
+  const cols = Math.max(4, Math.ceil(slotCount / ROWS));
+  return { cols, slotW: (WORLD_W - GRID_MARGIN * 2) / cols };
+}
+
+function spotX(col: number, layout: ShelfLayout): number {
+  return GRID_MARGIN + col * layout.slotW + layout.slotW / 2;
+}
 
 export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -100,11 +115,12 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
     const wx = ((e.clientX - bounds.left) / bounds.width) * WORLD_W;
     const wy = ((e.clientY - bounds.top) / bounds.height) * WORLD_H;
 
+    const layout = shelfLayout(engine.state.shelves.length);
     for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        const r = slotRect(col, row);
+      for (let col = 0; col < layout.cols; col++) {
+        const r = slotRect(col, row, layout);
         if (wx < r.x || wx >= r.x + r.w || wy < r.y || wy >= r.y + r.h) continue;
-        const slot = row * COLS + col;
+        const slot = row * layout.cols + col;
         const item = engine.state.shelves[slot];
         if (!item) return; // empty slot: nothing to price
         setSel((prev) => (prev?.slot === slot ? null : { slot, item }));
@@ -130,7 +146,7 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
         style={{ width: "100%", imageRendering: "pixelated", display: "block", cursor: "pointer" }}
       />
       {sel && (
-        <div style={panelAnchor(sel.slot)}>
+        <div style={panelAnchor(sel.slot, shelfLayout(engine.state.shelves.length))}>
           <PricingPanel item={sel.item} onSetPrice={setPrice} onClose={() => setSel(null)} />
         </div>
       )}
@@ -185,15 +201,20 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
 }
 
 /** Slot rectangle (world px) for column/row — also used for click hit-testing. */
-export function slotRect(col: number, row: number) {
-  return { x: GRID_X + col * SLOT_W, y: GRID_Y + row * SLOT_H, w: SLOT_W, h: SLOT_H };
+export function slotRect(col: number, row: number, layout: ShelfLayout) {
+  return {
+    x: GRID_MARGIN + col * layout.slotW,
+    y: GRID_Y + row * SLOT_H,
+    w: layout.slotW,
+    h: SLOT_H,
+  };
 }
 
 /** Floats the pricing panel next to its slot, in canvas-relative percentages so
  *  it tracks the shelf as the canvas scales. Bottom row opens upward. */
-function panelAnchor(slot: number): CSSProperties {
-  const row = Math.floor(slot / COLS);
-  const r = slotRect(slot % COLS, row);
+function panelAnchor(slot: number, layout: ShelfLayout): CSSProperties {
+  const row = Math.floor(slot / layout.cols);
+  const r = slotRect(slot % layout.cols, row, layout);
   const above = row === ROWS - 1;
   const y = above ? r.y : r.y + r.h;
   return {
@@ -242,13 +263,17 @@ function panelCorner(buttonCount: number): CSSProperties {
  * the right item. Contested lanes fall back to the first free spot; spots past
  * the front row (indices >= lane count) are the back row.
  */
-function placeCustomers(customers: Adventurer[], s: GameState) {
-  const lanes = CUSTOMER_SPOT_X.length;
+function placeCustomers(customers: Adventurer[], s: GameState, layout: ShelfLayout) {
+  const lanes = layout.cols;
   const wanted = customers.map((a) => {
     const slot = a.browsingItemId
       ? s.shelves.findIndex((it) => it?.id === a.browsingItemId)
       : -1;
-    return { a, item: slot >= 0 ? s.shelves[slot] : null, preferred: slot >= 0 ? slot % COLS : -1 };
+    return {
+      a,
+      item: slot >= 0 ? s.shelves[slot] : null,
+      preferred: slot >= 0 ? slot % layout.cols : -1,
+    };
   });
 
   const taken = new Set<number>();
@@ -302,18 +327,22 @@ export function renderShop(
   rect(ctx, 0, WORLD_H - 204, WORLD_W, PX, "#2c1f18"); // floor/wall trim
 
   // ---- Shelves with stock ----
+  // The grid follows however many slots the shop has, so an expansion widens
+  // the shelving instead of overflowing it.
+  const layout = shelfLayout(s.shelves.length);
+  const boardW = layout.cols * layout.slotW + 16;
   for (let row = 0; row < ROWS; row++) {
     const shelfY = GRID_Y + row * SLOT_H + ICON_PX + 20;
     // Shelf board spanning the row
-    rect(ctx, GRID_X - 8, shelfY, COLS * SLOT_W + 16, 12, PALETTE.wood[0]);
-    rect(ctx, GRID_X - 8, shelfY, COLS * SLOT_W + 16, PX, PALETTE.wood[1]); // top highlight
-    rect(ctx, GRID_X - 8, shelfY + 12, COLS * SLOT_W + 16, PX, "#2c1f18"); // shadow
+    rect(ctx, GRID_MARGIN - 8, shelfY, boardW, 12, PALETTE.wood[0]);
+    rect(ctx, GRID_MARGIN - 8, shelfY, boardW, PX, PALETTE.wood[1]); // top highlight
+    rect(ctx, GRID_MARGIN - 8, shelfY + 12, boardW, PX, "#2c1f18"); // shadow
 
-    for (let col = 0; col < COLS; col++) {
-      const slotIndex = row * COLS + col;
+    for (let col = 0; col < layout.cols; col++) {
+      const slotIndex = row * layout.cols + col;
       const item = s.shelves[slotIndex];
-      const { x } = slotRect(col, row);
-      const iconX = x + (SLOT_W - ICON_PX) / 2;
+      const { x } = slotRect(col, row, layout);
+      const iconX = x + (layout.slotW - ICON_PX) / 2;
       const iconY = shelfY - ICON_PX;
 
       if (!item) continue;
@@ -336,7 +365,7 @@ export function renderShop(
       ctx.font = `${4 * PX}px monospace`;
       ctx.textAlign = "center";
       ctx.fillStyle = item.salePrice === null ? PALETTE.textDim : PALETTE.gold;
-      ctx.fillText(label, x + SLOT_W / 2, shelfY + 36);
+      ctx.fillText(label, x + layout.slotW / 2, shelfY + 36);
     }
   }
   ctx.textAlign = "left";
@@ -361,12 +390,12 @@ export function renderShop(
     )
     .sort((a, b) => (a.id < b.id ? -1 : 1));
   const idleFrame = (Math.floor(performance.now() / 500) % 2) as 0 | 1;
-  const spots = placeCustomers(customers, s);
+  const spots = placeCustomers(customers, s, layout);
 
   // Back row first so the front row overlaps it.
   for (const { a, item, spot } of [...spots].sort((p, q) => q.spot - p.spot)) {
-    const back = spot >= CUSTOMER_SPOT_X.length;
-    const x = CUSTOMER_SPOT_X[spot % CUSTOMER_SPOT_X.length] + (back ? SLOT_W / 2 : 0);
+    const back = spot >= layout.cols;
+    const x = spotX(spot % layout.cols, layout) + (back ? layout.slotW / 2 : 0);
     const feetY = back ? AISLE_BACK_Y : AISLE_FRONT_Y;
     const headY = feetY - CHAR_H;
 
