@@ -129,6 +129,24 @@ describe("save/load", () => {
     expect(loaded!.speed).toBe(1); // never resumes paused/fast
   });
 
+  it("round-trips saveVersion (#57)", () => {
+    const e = freshEngine();
+    expect(e.state.saveVersion).toBe(1);
+    saveGame(e.state);
+    const loaded = loadGame();
+    expect(loaded!.saveVersion).toBe(1);
+  });
+
+  it("defaults saveVersion to 1 for a save written without it (#57)", () => {
+    const e = freshEngine();
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem("wdsa_save_v1")!);
+    delete raw.saveVersion;
+    localStorage.setItem("wdsa_save_v1", JSON.stringify(raw));
+    const loaded = loadGame();
+    expect(loaded!.saveVersion).toBe(1);
+  });
+
   it("rejects corrupt saves", () => {
     localStorage.setItem("wdsa_save_v1", "{not json");
     expect(loadGame()).toBeNull();

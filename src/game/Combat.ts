@@ -25,11 +25,16 @@ export function chooseArea(a: Adventurer, day: number): WildernessArea {
 /**
  * Resolve one adventure. Randomness is real but bounded — gear and level
  * dominate, dice decide the margins (spec §7: "some randomness").
+ *
+ * `rng` is injectable (spec V2.5: v2 generates AdventureScripts with a
+ * stored seed so any client replays them identically). Defaults to
+ * `Math.random` — zero behavior change on the v1 path.
  */
 export function resolveAdventure(
   a: Adventurer,
   day: number,
   opts: { night?: boolean } = {},
+  rng: () => number = Math.random,
 ): AdventureOutcome {
   const area = chooseArea(a, day);
   const seed = a.appearance.skin * 17 + a.appearance.hair * 31 + day * 7;
@@ -44,11 +49,11 @@ export function resolveAdventure(
   // guaranteed win or a hopeless massacre.
   const edge = power / (power + threat);
   const winChance = clamp(edge * 1.3, 0.15, 0.95);
-  const won = Math.random() < winChance;
+  const won = rng() < winChance;
 
   // Damage taken scales with how outmatched they were; armor blunts it.
   const armorQ = (a.equipment.armor && a.equipment.armor.durability !== 0) ? a.equipment.armor.quality : 0;
-  const baseDamage = won ? monster.damage * (0.6 + Math.random() * 0.6) : monster.damage * (1.2 + Math.random() * 0.8);
+  const baseDamage = won ? monster.damage * (0.6 + rng() * 0.6) : monster.damage * (1.2 + rng() * 0.8);
   const damageTaken = Math.max(1, Math.round(baseDamage - armorQ));
 
   // Death (spec §7): only possible on a loss, when damage would exceed HP.
@@ -59,7 +64,7 @@ export function resolveAdventure(
   const lootItemKeys: string[] = [];
   if (won) {
     lootItemKeys.push(monster.lootTable[seed % monster.lootTable.length]);
-    if ((opts.night || Math.random() < 0.4) && monster.lootTable.length > 1) {
+    if ((opts.night || rng() < 0.4) && monster.lootTable.length > 1) {
       lootItemKeys.push(monster.lootTable[(seed + 1) % monster.lootTable.length]);
     }
   }
@@ -68,12 +73,12 @@ export function resolveAdventure(
   // money supply is fixed and sales stall once adventurers go broke
   // (found via scripts/balance-report.ts). Scales with monster toughness.
   const goldFound = won
-    ? Math.round(monster.hp * (0.5 + Math.random() * 0.5) * (opts.night ? 1.6 : 1))
+    ? Math.round(monster.hp * (0.5 + rng() * 0.5) * (opts.night ? 1.6 : 1))
     : 0;
 
   // Gear durability loss — adventuring wears equipment down.
   const brokenItems: string[] = [];
-  const durLoss = DURABILITY_LOSS_MIN + Math.floor(Math.random() * (DURABILITY_LOSS_MAX - DURABILITY_LOSS_MIN + 1));
+  const durLoss = DURABILITY_LOSS_MIN + Math.floor(rng() * (DURABILITY_LOSS_MAX - DURABILITY_LOSS_MIN + 1));
   for (const slot of ["weapon", "armor"] as const) {
     const gear = a.equipment[slot];
     if (gear && gear.durability !== null && gear.durability > 0) {

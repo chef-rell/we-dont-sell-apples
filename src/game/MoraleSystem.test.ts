@@ -67,6 +67,14 @@ describe("processDayEnd", () => {
     expect(e.state.adventurers[3].relationships.shopkeeper).toBeLessThan(0);
   });
 
+  it("persists the computed reputation onto GameState (#60)", () => {
+    const e = engine();
+    for (const a of e.state.adventurers) a.relationships.shopkeeper = 0;
+    e.state.adventurers[0].relationships.shopkeeper = -90;
+    const r = processDayEnd(e.state);
+    expect(e.state.reputation).toBe(r.reputation);
+  });
+
   it("sustained bad reputation grinds morale down past the drift", () => {
     const e = engine();
     for (const a of e.state.adventurers) a.relationships.shopkeeper = -60;

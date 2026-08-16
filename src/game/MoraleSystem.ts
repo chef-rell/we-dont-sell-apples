@@ -43,6 +43,7 @@ export function processDayEnd(s: GameState): DayEndResult {
     alive.length === 0
       ? 0
       : alive.reduce((n, a) => n + a.relationships.shopkeeper, 0) / alive.length / 100;
+  s.reputation = reputation; // persisted (spec V2.9): shop-sign indicator + market data window
 
   for (const a of alive) {
     // --- Drift toward the resting point (life goes on).
