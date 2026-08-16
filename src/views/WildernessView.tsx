@@ -54,11 +54,7 @@ export function WildernessView({
     ctx.imageSmoothingEnabled = false;
 
     let raf = 0;
-    let last = performance.now();
     const frame = (now: number) => {
-      const delta = Math.min(now - last, 100);
-      last = now;
-      engine.tick(delta);
       renderWilderness(ctx, engine, now);
       raf = requestAnimationFrame(frame);
     };
