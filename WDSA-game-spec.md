@@ -1170,3 +1170,19 @@ phases built across both domains; deployed deterministic-only at
 https://web-production-b5454b.up.railway.app. Next milestone: owner playtest →
 balance tuning (`src/utils/constants.ts` + `scripts/balance-report.ts`).
 Handoff docs: `README.md` (humans), `CLAUDE.md` (agents).
+
+### §22 v2 pivot — 2026-08-16
+
+Owner approved the v2 pivot after the v1.5 playtest. **Design source of truth for
+v2 is `WDSA-v2-spec.md`**; this document remains authoritative for every v1 system
+v2 doesn't supersede (§6 carries forward inviolable). Rollback: tag
+`v1.5-playtest`. Key deltas vs §19's future vision: **isometric procedural 2D**
+chosen instead of the Three.js 3D idea; a three-panel triptych layout (iso town /
+time column / side-scrolling adventure strip) replaces the single-view UI of §11;
+a helper character with progression tracks and player-plot property expansion are
+added (not in this spec); adventure outcomes become pre-resolved seeded
+*AdventureScripts* that the renderer plays back (§6 philosophy extended to
+combat). Locked owner decisions: procedural iso art at production quality;
+hired-specialist escape hatch for non-chosen helper tracks; main stays
+always-shippable with Railway deploying each phase; v2 uses a fresh save key
+(`wdsa_save_v2`), no migration, v1 save preserved.
