@@ -291,6 +291,13 @@ plus #65, a test-determinism fix). Build notes for later phases:
    movement), and the equipped weapon renders as one uniform blade regardless
    of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
 
+**2026-08-16 — Phase 3 complete, tagged `v2.3-helper`** (issues #83 helper
+engine, #84 creation + UI + child sprite — PRs #85, #88; plus #86/#87 test
+determinism fixes, one of which briefly shipped a build-red commit to main —
+caught and hotfixed within minutes; verification chains now use pipefail).
+Craft track remains locked pending Phase 4. Helper effects gate on daily
+`assignment` rather than permanent `track` (see the #83 entry below).
+
 **2026-08-16 — Phase 2 complete, tagged `v2.2-triptych`** (issues #76
 AdventureScript + parties, #77 triptych layout + time column, #78 adventure
 strip — PRs #80, #79, #81). Balance guardrail held: +18% gold vs pre-party
