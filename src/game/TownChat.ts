@@ -115,14 +115,39 @@ export function playerChatResponders(s: GameState, playerText: string): Adventur
   return [alive[Math.floor(Math.random() * alive.length)]];
 }
 
-/** Deterministic reply when AI is unavailable. */
+/** Deterministic reply when AI is unavailable — varied by personality so two
+ *  responders never sound like the same person (issue #33, §17). */
 export function fallbackReply(a: Adventurer, playerText: string): string {
   const text = playerText.toLowerCase();
+  const flavor = a.appearance.skin + a.appearance.hair; // stable per-adventurer variety
   if (/(sword|shield|armor|potion|stock|shipment|sale)/.test(text)) {
-    return a.gold > 40 ? "I'll come have a look." : "Wish I had the coin for it.";
+    if (a.gold <= 40) {
+      return pick(flavor, [
+        "Wish I had the coin for it.",
+        "Maybe after my next haul.",
+        "You take IOUs?",
+      ]);
+    }
+    const byStyle: Record<Adventurer["personality"]["spendingStyle"], string[]> = {
+      impulsive: ["Save one for me — I'm on my way!", "Sold. Don't let anyone touch it."],
+      careful: ["I'll come take a look and judge for myself.", "Depends on the price, as always."],
+      frugal: ["At a fair price, mind you.", "If it's cheaper than the last lot, I'm interested."],
+      generous: ["Good on you — I'll swing by.", "I'll bring a friend, you deserve the custom."],
+    };
+    return pick(flavor, byStyle[a.personality.spendingStyle]);
   }
   if (/(careful|danger|golem|cave|monster|warn)/.test(text)) {
-    return a.personality.riskTolerance > 60 ? "Sounds like a challenge." : "Appreciate the warning.";
+    return a.personality.riskTolerance > 60
+      ? pick(flavor, ["Sounds like a challenge.", "Now I HAVE to see it.", "Tougher the fight, better the loot."])
+      : pick(flavor, ["Appreciate the warning.", "That settles it — forest for me today.", "Duly noted. I like my limbs attached."]);
   }
-  return "Ha — fair enough, shopkeeper.";
+  return pick(flavor, [
+    "Ha — fair enough, shopkeeper.",
+    "If you say so.",
+    "Heard, loud and clear.",
+  ]);
+}
+
+function pick(seed: number, options: string[]): string {
+  return options[seed % options.length];
 }

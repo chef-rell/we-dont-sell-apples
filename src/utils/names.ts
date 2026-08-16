@@ -15,3 +15,14 @@ export function generateName(rng: () => number = Math.random): string {
   const epithet = EPITHETS[Math.floor(rng() * EPITHETS.length)];
   return `${first} ${epithet}`;
 }
+
+/** Generate a name whose FIRST name collides with none of `taken` — two Brens
+ *  in one town confuses both the player and named chat routing. */
+export function generateUniqueName(takenNames: string[]): string {
+  const takenFirsts = new Set(takenNames.map((n) => n.split(" ")[0]));
+  const available = FIRST.filter((f) => !takenFirsts.has(f));
+  if (available.length === 0) return generateName(); // town bigger than the name pool
+  const first = available[Math.floor(Math.random() * available.length)];
+  const epithet = EPITHETS[Math.floor(Math.random() * EPITHETS.length)];
+  return `${first} ${epithet}`;
+}
