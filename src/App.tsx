@@ -8,6 +8,7 @@ import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
 import { ChatPanel } from "./ui/ChatPanel";
 import { NightSummary } from "./ui/NightSummary";
+import { Toasts } from "./ui/Toasts";
 import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
@@ -101,6 +102,7 @@ export default function App() {
           summary, chat) sit over the game rather than the whole window. */}
       <main key={run} style={{ position: "relative", maxWidth: WORLD_W, margin: "0 auto", width: "100%" }}>
         <NightSummary engine={engine} />
+        {view !== "gameover" && <Toasts engine={engine} />}
         {view !== "gameover" && <ChatPanel engine={engine} />}
         {view === "gameover" ?
           <GameOverView engine={engine} onRestart={restart} />
