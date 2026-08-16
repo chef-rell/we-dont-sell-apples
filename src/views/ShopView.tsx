@@ -410,7 +410,14 @@ export function renderShop(
 
   // ---- Counter + shopkeeper ----
   const counterY = WORLD_H - 150;
-  drawCharacter(ctx, { class: "veteran", appearance: { skin: 2, hair: 2 } }, WORLD_W / 2 - 20, counterY - 64, 0);
+  drawCharacter(
+    ctx,
+    { class: "veteran", appearance: { skin: 2, hair: 2 }, equipment: {} },
+    WORLD_W / 2 - 20,
+    counterY - 64,
+    0,
+    "down", // stationary behind the counter, facing the customers
+  );
   rect(ctx, WORLD_W / 2 - 180, counterY, 360, 40, PALETTE.wood[0]); // counter top
   rect(ctx, WORLD_W / 2 - 180, counterY, 360, PX, PALETTE.wood[1]); // highlight
   rect(ctx, WORLD_W / 2 - 180, counterY + 40, 360, 24, "#4a3220"); // counter front
@@ -438,7 +445,7 @@ export function renderShop(
     const headY = feetY - CHAR_H;
 
     rect(ctx, x - 16, feetY - PX, 32, PX, "#2c1f18"); // floor shadow
-    drawCharacter(ctx, a, x - 20, headY, idleFrame);
+    drawCharacter(ctx, a, x - 20, headY, idleFrame, a.position.facing);
 
     // Name below the feet, leaving the airspace above the head to the bubble.
     ctx.font = `${3 * PX}px monospace`;
