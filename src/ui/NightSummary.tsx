@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { GameEngine } from "../game/GameEngine";
+import { ledgerInsights } from "../game/Ledger";
 import type { GameState } from "../types";
 import { PALETTE } from "../utils/constants";
 
@@ -64,6 +65,7 @@ export function NightSummary({ engine }: { engine: GameEngine }) {
 
   // The day's own notable lines, most recent last, trimmed to fit.
   const events = s.messages.filter((m) => m.day === s.day && m.type === "system").slice(-4);
+  const insights = ledgerInsights(s.ledger);
 
   return (
     <div style={overlayStyle}>
@@ -84,6 +86,24 @@ export function NightSummary({ engine }: { engine: GameEngine }) {
           <Row label="Adventurers lost" value={lost} bad={lost > 0} />
         </div>
 
+        <Reactions ledger={s.ledger} />
+
+        {insights.length > 0 && (
+          <div style={insightsStyle}>
+            {insights.map((line) => (
+              <div
+                key={line}
+                style={{
+                  color: line.startsWith("⚠") ? "#e07030" : PALETTE.textLight,
+                  fontSize: 12,
+                }}
+              >
+                {line}
+              </div>
+            ))}
+          </div>
+        )}
+
         {events.length > 0 && (
           <div style={eventsStyle}>
             {events.map((m) => (
@@ -98,6 +118,22 @@ export function NightSummary({ engine }: { engine: GameEngine }) {
           Turn in
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Today's reaction tally — the §17 learning signal, made countable. */
+function Reactions({ ledger }: { ledger: GameState["ledger"] }) {
+  const r = ledger.reactions;
+  const total = r.happy + r.neutral + r.unhappy + r.angry;
+  if (total === 0) return null;
+  return (
+    <div style={reactionsStyle}>
+      <span style={{ color: "#5bbf5b" }}>🙂 {r.happy}</span>
+      <span style={{ color: "#d9b93a" }}>😐 {r.neutral}</span>
+      <span style={{ color: "#d98a3a" }}>🙁 {r.unhappy}</span>
+      <span style={{ color: "#c0392b" }}>😠 {r.angry}</span>
+      <span style={{ color: PALETTE.textDim, fontSize: 11 }}>reactions today</span>
     </div>
   );
 }
@@ -159,6 +195,21 @@ const rowStyle: CSSProperties = {
   gap: 12,
   borderBottom: `2px solid #22223c`,
   paddingBottom: 4,
+};
+
+const reactionsStyle: CSSProperties = {
+  display: "flex",
+  gap: 12,
+  alignItems: "baseline",
+  fontSize: 14,
+};
+
+const insightsStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  borderLeft: `4px solid ${PALETTE.uiBorder}`,
+  paddingLeft: 8,
 };
 
 const eventsStyle: CSSProperties = {
