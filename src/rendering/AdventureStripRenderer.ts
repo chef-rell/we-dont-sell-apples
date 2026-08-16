@@ -18,7 +18,7 @@
 // survivors only, at half the walk-frame rate (the limping read). Night
 // plays no script at all (see the module-end note on night raids).
 
-import { drawCharacter } from "./CharacterRenderer";
+import { CHILD_SPRITE_H, drawCharacter } from "./CharacterRenderer";
 import type { Facing } from "./CharacterRenderer";
 import { drawItemIcon } from "./ItemRenderer";
 import { shade } from "./iso";
@@ -33,6 +33,7 @@ import type {
   AdventureScriptEvent,
   DayPhase,
   GameState,
+  Helper,
   ItemCategory,
 } from "../types";
 import { DAY_SKY, PALETTE, PHASE_BOUNDS, PX, STRIP_H, WORLD_W } from "../utils/constants";
@@ -62,6 +63,8 @@ const C = {
   scree: "#4a4438",
   bone: "#8a8a92",
   boneDark: "#5a5a62",
+  sackBrown: "#8a6a3a",
+  sackDark: "#5e4526",
 } as const;
 
 // ---------- Public entry point ----------
@@ -180,10 +183,10 @@ function playScript(ctx: CanvasRenderingContext2D, state: GameState, script: Adv
   processEvents(script, outboundP, now);
 
   if (!returning) {
-    drawOutboundLeg(ctx, party, deathTById, encounterTs, script, outboundP, now);
+    drawOutboundLeg(ctx, party, deathTById, encounterTs, script, outboundP, now, state.helper);
   } else {
     drawFallenMarkers(ctx, party, deathTById);
-    drawReturnLeg(ctx, party, outcomeById, returnP, now);
+    drawReturnLeg(ctx, party, outcomeById, returnP, now, script.helperAlong, state.helper);
   }
 }
 
@@ -285,6 +288,7 @@ function drawOutboundLeg(
   script: AdventureScript,
   p: number,
   now: number,
+  helper: Helper | null,
 ): void {
   const groupX = xForT(marchProgress(p, encounterTs));
   const frame: 0 | 1 = Math.floor(now / 180) % 2 === 0 ? 0 : 1;
@@ -302,6 +306,10 @@ function drawOutboundLeg(
     drawMarcher(ctx, a, groupX + dx, GROUND_Y + dy, frame, "right");
     drawRunningHpBar(ctx, a, script, p, groupX + dx, GROUND_Y + dy, now);
   });
+
+  if (script.helperAlong && helper) {
+    drawHelperMarcher(ctx, helper, groupX + helperDx(party.length, helper.level), GROUND_Y, frame, "right");
+  }
 
   drawFallenMarkers(ctx, party, deathTById, p);
 }
@@ -380,6 +388,8 @@ function drawReturnLeg(
   outcomeById: Map<string, AdventureOutcome>,
   p: number,
   now: number,
+  helperAlong: boolean,
+  helper: Helper | null,
 ): void {
   const survivors = party.filter((a) => outcomeById.get(a.id)?.survived);
   const x = MARCH_X1 - p * (MARCH_X1 - MARCH_X0);
@@ -390,6 +400,19 @@ function drawReturnLeg(
     const { dx, dy } = stagger(i, survivors.length);
     drawMarcher(ctx, a, x + dx, GROUND_Y + dy, frame, "left");
   });
+
+  if (helperAlong && helper) {
+    if (survivors.length === 0) {
+      // Full wipe: nobody marches back under the normal formation path —
+      // the helper alone drags home whatever gold/items the dead party
+      // couldn't carry (GameEngine already applied the real effects via
+      // this script's "helperCarry" events; this is purely that beat's
+      // visual).
+      drawHelperAlone(ctx, helper, x, GROUND_Y, frame);
+    } else {
+      drawHelperMarcher(ctx, helper, x + helperDx(survivors.length, helper.level), GROUND_Y, frame, "left");
+    }
+  }
 }
 
 // ---------- Shared party/marker drawing ----------
@@ -413,6 +436,48 @@ function drawMarcher(
   ctx.fillStyle = PALETTE.textDim;
   ctx.fillText(a.name.split(" ")[0], x, y + 10);
   ctx.textAlign = "left";
+}
+
+/** The helper's marching-formation offset relative to the real party's
+ *  center line — one step further out than the outermost real member.
+ *  Negative dx = back of formation (trailing, further from the direction
+ *  of travel, the default); positive dx = front (leading, level >= 4).
+ *  Like `stagger()`, this is direction-agnostic — the same sign convention
+ *  reads correctly added onto either leg's own x (outbound marches right,
+ *  return marches left), so callers never flip the sign themselves. */
+function helperDx(formationSize: number, level: number): number {
+  const half = (formationSize - 1) / 2;
+  return (level >= 4 ? half + 1 : -(half + 1)) * 20;
+}
+
+/** The helper's marching sprite — smaller than a real party member's, no
+ *  name label (spec: keep the helper's marker simpler). */
+function drawHelperMarcher(
+  ctx: CanvasRenderingContext2D,
+  helper: Helper,
+  x: number,
+  y: number,
+  frame: 0 | 1,
+  facing: Facing,
+): void {
+  rect(ctx, x - 12, y - PX, 24, PX, "rgba(20,16,12,0.4)"); // ground shadow
+  drawCharacter(ctx, helper, x - 18, y - CHILD_SPRITE_H, frame, facing, "child");
+}
+
+/** Full-wipe beat: nobody survived to march home, so the helper (if it
+ *  tagged along) walks the same return timeline alone, dragging a sack of
+ *  whatever gold/items the dead party couldn't carry — the visual for the
+ *  script's "helperCarry" events, which GameEngine has already resolved
+ *  into state.gold/state.inventory elsewhere; this draws no numbers. */
+function drawHelperAlone(ctx: CanvasRenderingContext2D, helper: Helper, x: number, y: number, frame: 0 | 1): void {
+  // Sack trails behind, opposite the direction of travel (walking left, so
+  // it drags to the sprite's right). A couple of overlapping rects read as
+  // "lumpy sack" rather than a crate.
+  rect(ctx, x + 10, y - 14, 14, 10, C.sackDark);
+  rect(ctx, x + 14, y - 21, 12, 13, C.sackBrown);
+  rect(ctx, x + 12, y - 10, 10, 4, C.sackDark);
+  rect(ctx, x - 12, y - PX, 24, PX, "rgba(20,16,12,0.4)"); // ground shadow
+  drawCharacter(ctx, helper, x - 18, y - CHILD_SPRITE_H, frame, "left", "child");
 }
 
 /** Fallen party members stay exactly where they fell for the rest of the

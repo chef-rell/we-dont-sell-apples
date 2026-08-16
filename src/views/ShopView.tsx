@@ -176,6 +176,7 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
             suggestion={engine.suggestedPrice(sel.item.name)}
             onSetPrice={setPrice}
             onClose={() => setSel(null)}
+            engine={engine}
           />
         </div>
       )}
@@ -412,7 +413,7 @@ export function renderShop(
   const counterY = WORLD_H - 150;
   drawCharacter(
     ctx,
-    { class: "veteran", appearance: { skin: 2, hair: 2 }, equipment: {} },
+    { class: "veteran", appearance: s.shopkeeperAppearance ?? { skin: 2, hair: 2 }, equipment: {} },
     WORLD_W / 2 - 20,
     counterY - 64,
     0,

@@ -12,9 +12,10 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 import type { GameEngine } from "../game/GameEngine";
 import { skyTint } from "../game/DayNightCycle";
-import { drawCharacter } from "../rendering/CharacterRenderer";
+import { CHILD_SPRITE_H, drawCharacter } from "../rendering/CharacterRenderer";
 import { depthKey, drawIsoBlock, isoFacing, project, shade, unproject } from "../rendering/iso";
 import { hash2d, rect } from "../rendering/PixelRenderer";
+import { Particles } from "../rendering/Particles";
 import type { AdventurerState, TownBuilding } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 import { getBuilding, worldPointToBuilding } from "../utils/TownBuildings";
@@ -282,10 +283,23 @@ function drawGroundTile(ctx: CanvasRenderingContext2D, wx: number, wy: number, s
 
 // ---------- main render ----------
 
+// Sweep animation for the shop's helper: dust flecks are cosmetic ambience
+// (Math.random(), never a fixed formula — determinism-vs-liveliness gotcha
+// in CLAUDE.md) and live in a module-scoped Particles instance the same way
+// ShopView's rAF loop and AdventureStripRenderer's renderStrip each own
+// theirs across frames. `lastFrameTime` mirrors AdventureStripRenderer's
+// `lastNow` to turn the rAF timestamp into a per-frame delta.
+let lastFrameTime: number | null = null;
+const helperDustParticles = new Particles();
+
 function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) {
   const s = engine.state;
   const night = s.phase === "night" || s.phase === "evening";
   const buildings = s.buildings;
+
+  const deltaMs = lastFrameTime === null ? 0 : Math.min(now - lastFrameTime, 100);
+  lastFrameTime = now;
+  helperDustParticles.update(deltaMs);
 
   // Backdrop behind the projected diamond (the world's four corners don't
   // reach the canvas's four corners — see iso.ts's header comment).
@@ -403,8 +417,71 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
     });
   }
 
+  // The helper: shop-adjacent duty (chores/shop assignment, spec V2.7 /
+  // issue #83) parks it by the shop door doing an idle sweep — same
+  // drawable idiom as the adventurers above (depth-sorted, feet-anchored
+  // via project()), but drawn with the shorter "child" sprite variant and
+  // no walk cycle since it's stationary. Skips the draw if there's no shop
+  // building (registry lookup miss) or the helper is off doing something
+  // else today (adventuring).
+  if (shop?.door && s.helper && (s.helper.assignment === "chores" || s.helper.assignment === "shop")) {
+    const helper = s.helper;
+    const anchorX = shop.door.x + 30;
+    const anchorY = shop.door.y - 8;
+    drawables.push({
+      key: depthKey(anchorX, anchorY),
+      draw: () => {
+        const { sx, sy } = project(anchorX, anchorY);
+        const drawX = sx - 20;
+        const drawY = sy - CHILD_SPRITE_H;
+        drawCharacter(ctx, helper, drawX, drawY, 0, "SW", "child");
+
+        // Broom: handle + bristle head, both shifting together between two
+        // ground-level positions just clear of the sprite's own 40px-wide
+        // silhouette (sx-20 to sx+20) — kept entirely outside the body box
+        // so it reads as its own object next to the child rather than
+        // blending into the tunic (an earlier version overlapped the
+        // trailing arm and all but vanished at this palette's resolution).
+        // Dark handle against a bright bristle head stays legible against
+        // both the wall behind it and the character beside it. Slow,
+        // readable 2-frame cadence — ambience, not a leg-cycle.
+        const swingFrame = Math.floor(now / 300) % 2;
+        const swingX = swingFrame === 0 ? 0 : 10;
+        const handX = sx + 22 + swingX;
+        const handY = sy - 30;
+        const handLen = 22;
+        const headW = PX * 3;
+        const headX = handX - PX;
+        const headY = handY + handLen - PX;
+        rect(ctx, handX, handY, PX, handLen, "#3a2c1e"); // handle
+        rect(ctx, headX, headY, headW, PX * 2, "#e8d9a8"); // bristle head, near the ground
+
+        // Dust fleck, occasionally — ambience only, so Math.random() (never
+        // a fixed formula, or the sweep reads as frozen/robotic).
+        if (Math.random() < 0.02) {
+          helperDustParticles.burst(headX + headW / 2, headY, {
+            count: 1 + Math.floor(Math.random() * 2),
+            colors: ["#e8d9a8"],
+            speed: 30,
+            spread: 1,
+            gravity: 60,
+            life: 0.5,
+            size: PX,
+          });
+        }
+
+        ctx.fillStyle = PALETTE.textLight;
+        ctx.font = `${2.5 * PX}px monospace`;
+        ctx.textAlign = "center";
+        ctx.fillText(helper.name.split(" ")[0], sx, drawY - PX);
+        ctx.textAlign = "left";
+      },
+    });
+  }
+
   drawables.sort((a, b) => a.key - b.key);
   for (const d of drawables) d.draw();
+  helperDustParticles.draw(ctx);
 
   // Day/night tint over everything — same technique as the old flat view:
   // a translucent overlay darkens every tile/face tone already painted, and

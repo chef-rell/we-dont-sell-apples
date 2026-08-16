@@ -282,9 +282,134 @@ const FACINGS: Record<Facing, { draw: PoseFn; mirror: boolean }> = {
   NW: { draw: drawThreeQuarterBack, mirror: true },
 };
 
+// ---------------------------------------------------------------------
+// Child variant (spec V2.7/V2.15, issue #84): the Helper's sprite. Shorter
+// than the adult grid — 10×12 vs 10×16 — head 6×5, body 6×4, legs 2×3.
+// Deliberately reuses every X-axis coordinate from the adult poses above
+// verbatim (the grid is still 10 units wide; only the vertical proportions
+// compress), so each child pose below is the adult pose's geometry with
+// just the row math rescaled: head/cap start at gy (height 5, was 6), body
+// starts at gy+5 (was gy+6, height 4, was 6), hands sit at gy+8 (was
+// gy+11), legs start at gy+9 (was gy+12, height 3, was 4). Same eight
+// facings, same mirror-for-left/-SW/-NW machinery as the adult grid.
+//
+// The helper has no adventurer class or equipment slot, so there's no
+// class accessory, hood, robe, or weapon here — just a plain tunic, kept
+// deliberately its own thing rather than a tiny copy of one of the six
+// adventurer palettes.
+const CHILD_CLOTHES = { body: "#8a6b42", accent: "#5a4228" }; // tunic + hem
+
+type ChildSpriteCtx = { skin: string; hair: string; walkFrame: 0 | 1 };
+type ChildPoseFn = (ctx: CanvasRenderingContext2D, gx: number, gy: number, s: ChildSpriteCtx) => void;
+
+/** Legs (2×3 each), alternating heights on the walk cycle — same lift
+ *  pattern as the adult drawLegs, just off the child's shorter leg run. */
+function drawChildLegs(ctx: CanvasRenderingContext2D, gx: number, gy: number, walkFrame: 0 | 1): void {
+  const lLift = walkFrame === 0 ? 0 : 1;
+  const rLift = walkFrame === 0 ? 1 : 0;
+  px(ctx, gx + 3, gy + 9, 2, 3 - lLift, "#3a3a44");
+  px(ctx, gx + 5, gy + 9, 2, 3 - rLift, "#3a3a44");
+}
+
+const drawChildFront: ChildPoseFn = (ctx, gx, gy, s) => {
+  px(ctx, gx + 2, gy, 6, 5, s.skin);
+  px(ctx, gx + 2, gy, 6, 2, s.hair);
+  px(ctx, gx + 3, gy + 2, 1, 1, "#1a1a2e");
+  px(ctx, gx + 6, gy + 2, 1, 1, "#1a1a2e");
+
+  px(ctx, gx + 2, gy + 5, 6, 4, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 5, 2, 3, CHILD_CLOTHES.body);
+  px(ctx, gx + 8, gy + 5, 2, 3, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 8, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 2, gy + 8, 6, 1, CHILD_CLOTHES.accent); // hem
+
+  drawChildLegs(ctx, gx, gy, s.walkFrame);
+};
+
+const drawChildBack: ChildPoseFn = (ctx, gx, gy, s) => {
+  px(ctx, gx + 2, gy, 6, 5, s.hair); // no face from behind
+
+  px(ctx, gx + 2, gy + 5, 6, 4, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 5, 2, 3, CHILD_CLOTHES.body);
+  px(ctx, gx + 8, gy + 5, 2, 3, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 8, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 2, gy + 8, 6, 1, CHILD_CLOTHES.accent);
+
+  drawChildLegs(ctx, gx, gy, s.walkFrame);
+};
+
+/** Profile, canonical right — "left" mirrors it, same as the adult side pose. */
+const drawChildSide: ChildPoseFn = (ctx, gx, gy, s) => {
+  px(ctx, gx + 2, gy, 6, 5, s.skin);
+  px(ctx, gx + 2, gy, 3, 5, s.hair); // trailing half, full head height
+  px(ctx, gx + 2, gy, 6, 2, s.hair); // cap
+  px(ctx, gx + 6, gy + 2, 1, 1, "#1a1a2e");
+
+  px(ctx, gx + 2, gy + 5, 6, 4, CHILD_CLOTHES.body);
+  px(ctx, gx + 7, gy + 5, 2, 3, CHILD_CLOTHES.body); // leading arm only
+  px(ctx, gx + 7, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 2, gy + 8, 6, 1, CHILD_CLOTHES.accent);
+
+  drawChildLegs(ctx, gx, gy, s.walkFrame);
+};
+
+/** Three-quarter front, canonical SE — "SW" mirrors it. */
+const drawChildThreeQuarterFront: ChildPoseFn = (ctx, gx, gy, s) => {
+  px(ctx, gx + 2, gy, 6, 5, s.skin);
+  px(ctx, gx + 2, gy, 6, 2, s.hair);
+  px(ctx, gx + 2, gy, 1, 5, s.hair); // trailing sliver, full height
+  px(ctx, gx + 4, gy + 2, 1, 1, "#1a1a2e");
+  px(ctx, gx + 7, gy + 2, 1, 1, "#1a1a2e");
+
+  px(ctx, gx + 2, gy + 5, 6, 4, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 5, 1, 3, CHILD_CLOTHES.body); // trailing arm, narrowed
+  px(ctx, gx + 8, gy + 5, 2, 3, CHILD_CLOTHES.body); // leading arm, full
+  px(ctx, gx, gy + 8, 1, 1, s.skin);
+  px(ctx, gx + 8, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 2, gy + 8, 6, 1, CHILD_CLOTHES.accent);
+
+  drawChildLegs(ctx, gx, gy, s.walkFrame);
+};
+
+/** Three-quarter back, canonical NE — "NW" mirrors it. */
+const drawChildThreeQuarterBack: ChildPoseFn = (ctx, gx, gy, s) => {
+  px(ctx, gx + 2, gy, 6, 5, s.hair);
+
+  px(ctx, gx + 2, gy + 5, 6, 4, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 5, 1, 3, CHILD_CLOTHES.body);
+  px(ctx, gx + 8, gy + 5, 2, 3, CHILD_CLOTHES.body);
+  px(ctx, gx, gy + 8, 1, 1, s.skin);
+  px(ctx, gx + 8, gy + 8, 2, 1, s.skin);
+  px(ctx, gx + 2, gy + 8, 6, 1, CHILD_CLOTHES.accent);
+
+  drawChildLegs(ctx, gx, gy, s.walkFrame);
+};
+
+const CHILD_FACINGS: Record<Facing, { draw: ChildPoseFn; mirror: boolean }> = {
+  down: { draw: drawChildFront, mirror: false },
+  up: { draw: drawChildBack, mirror: false },
+  right: { draw: drawChildSide, mirror: false },
+  left: { draw: drawChildSide, mirror: true },
+  SE: { draw: drawChildThreeQuarterFront, mirror: false },
+  SW: { draw: drawChildThreeQuarterFront, mirror: true },
+  NE: { draw: drawChildThreeQuarterBack, mirror: false },
+  NW: { draw: drawChildThreeQuarterBack, mirror: true },
+};
+
+/** Child sprite's total height in world px (12 grid units), for callers
+ *  that anchor a sprite by its feet — same role the "64" the adult sprite
+ *  (16 grid units) gets hardcoded as at call sites, just named so a
+ *  helper-drawing call site doesn't have to repeat the 12*PX math. */
+export const CHILD_SPRITE_H = 12 * PX;
+
 /**
  * Draw a character at world position (x, y) = top-left of the sprite.
- * Sprite is 10 grid units wide (arms included) × 16 tall.
+ * Adult sprite (the default `variant`) is 10 grid units wide (arms
+ * included) × 16 tall, unchanged. `variant: "child"` (issue #84) draws the
+ * Helper's shorter 10×12 sprite instead — see the child pose functions
+ * above; it only ever needs `appearance` (no class, no equipment slot).
  * walkFrame: 0 or 1 for the leg-alternation cycle; pass 0 when idle.
  * facing: defaults to "down" (today's front pose) when omitted, so
  * existing call sites compile and render identically.
@@ -295,23 +420,65 @@ export function drawCharacter(
   x: number,
   y: number,
   walkFrame: 0 | 1,
+  facing?: Facing,
+  variant?: "adult",
+): void;
+export function drawCharacter(
+  ctx: CanvasRenderingContext2D,
+  a: Pick<Adventurer, "appearance">,
+  x: number,
+  y: number,
+  walkFrame: 0 | 1,
+  facing: Facing | undefined,
+  variant: "child",
+): void;
+export function drawCharacter(
+  ctx: CanvasRenderingContext2D,
+  a: Pick<Adventurer, "appearance"> & Partial<Pick<Adventurer, "class" | "equipment">>,
+  x: number,
+  y: number,
+  walkFrame: 0 | 1,
   facing: Facing = "down",
+  variant: "adult" | "child" = "adult",
 ): void {
   const gx = x / PX;
   const gy = y / PX;
+  const skin = PALETTE.skins[a.appearance.skin % PALETTE.skins.length];
+  const hair = PALETTE.hair[a.appearance.hair % PALETTE.hair.length];
+
+  if (variant === "child") {
+    const childCtx: ChildSpriteCtx = { skin, hair, walkFrame };
+    const pose = CHILD_FACINGS[facing] ?? CHILD_FACINGS.down;
+    if (!pose.mirror) {
+      pose.draw(ctx, gx, gy, childCtx);
+      return;
+    }
+    const centerPx = x + 5 * PX;
+    ctx.save();
+    ctx.translate(centerPx, 0);
+    ctx.scale(-1, 1);
+    ctx.translate(-centerPx, 0);
+    pose.draw(ctx, gx, gy, childCtx);
+    ctx.restore();
+    return;
+  }
+
+  // Adult path: the two overloads above guarantee class/equipment are
+  // present whenever a real call site reaches here with the default variant.
+  const cclass = a.class as AdventurerClass;
   const spriteCtx: SpriteCtx = {
-    skin: PALETTE.skins[a.appearance.skin % PALETTE.skins.length],
-    hair: PALETTE.hair[a.appearance.hair % PALETTE.hair.length],
-    cls: CLASS_COLORS[a.class],
-    isMage: a.class === "mage" || a.class === "cleric",
-    isRogue: a.class === "rogue",
+    skin,
+    hair,
+    cls: CLASS_COLORS[cclass],
+    isMage: cclass === "mage" || cclass === "cleric",
+    isRogue: cclass === "rogue",
     walkFrame,
-    hasWeapon: Boolean(a.equipment.weapon),
+    hasWeapon: Boolean(a.equipment?.weapon),
   };
 
   const pose = FACINGS[facing] ?? FACINGS.down;
   if (!pose.mirror) {
-    pose.draw(ctx, gx, gy, spriteCtx, a.class);
+    pose.draw(ctx, gx, gy, spriteCtx, cclass);
     return;
   }
 
@@ -322,6 +489,6 @@ export function drawCharacter(
   ctx.translate(centerPx, 0);
   ctx.scale(-1, 1);
   ctx.translate(-centerPx, 0);
-  pose.draw(ctx, gx, gy, spriteCtx, a.class);
+  pose.draw(ctx, gx, gy, spriteCtx, cclass);
   ctx.restore();
 }
