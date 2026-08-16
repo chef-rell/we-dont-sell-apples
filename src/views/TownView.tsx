@@ -1,7 +1,7 @@
 // Town View: top-down pixel scene with buildings, paths, trees, and
 // wandering adventurers (spec §3a). Owns the canvas + rAF loop for Phase 1.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MouseEvent } from "react";
 import type { GameEngine } from "../game/GameEngine";
 import { TOWN } from "../game/GameEngine";
 import { skyTint } from "../game/DayNightCycle";
@@ -10,8 +10,22 @@ import { drawCharacter } from "../rendering/CharacterRenderer";
 import { hash2d, px, rect } from "../rendering/PixelRenderer";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 
-export function TownView({ engine }: { engine: GameEngine }) {
+export function TownView({ engine, onEnterShop }: { engine: GameEngine; onEnterShop: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Clicking the shop building enters the Shop View. Map the click from CSS
+  // pixels back into world coordinates (the canvas is scaled to fit the window).
+  const handleClick = (e: MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const r = canvas.getBoundingClientRect();
+    const wx = ((e.clientX - r.left) / r.width) * WORLD_W;
+    const wy = ((e.clientY - r.top) / r.height) * WORLD_H;
+    // Shop footprint (walls + roof), with a little slack for easy clicking.
+    if (wx >= TOWN.shop.x - 20 && wx <= TOWN.shop.x + 96 && wy >= TOWN.shop.y - 24 && wy <= TOWN.shop.y + 64) {
+      onEnterShop();
+    }
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -39,12 +53,14 @@ export function TownView({ engine }: { engine: GameEngine }) {
       ref={canvasRef}
       width={WORLD_W}
       height={WORLD_H}
+      onClick={handleClick}
       style={{
         width: "100%",
         maxWidth: WORLD_W,
         imageRendering: "pixelated",
         display: "block",
         margin: "0 auto",
+        cursor: "pointer",
       }}
     />
   );

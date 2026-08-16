@@ -73,21 +73,24 @@ const staff: IconFn = (ctx, gx, gy) => {
 // ---------- Armor ----------
 
 const shield: IconFn = (ctx, gx, gy) => {
-  // Kite/diamond outline in metal with a wood emblem
-  px(ctx, gx + 3, gy, 2, 1, C.steel);
-  px(ctx, gx + 2, gy + 1, 4, 1, C.steel);
-  px(ctx, gx + 1, gy + 2, 6, 2, C.steel);
-  px(ctx, gx + 2, gy + 4, 4, 1, C.steel);
-  px(ctx, gx + 3, gy + 5, 2, 1, C.steel);
-  px(ctx, gx + 3, gy + 2, 2, 2, C.wood); // boss/emblem
-  px(ctx, gx + 1, gy + 2, 1, 2, C.steelDark); // left edge shade
+  // Solid heater shield: flat top, tapering to a point, with a bronze stripe.
+  // Kept solid (no contrasting center) so it never reads as a ring.
+  px(ctx, gx + 1, gy, 6, 4, C.steel); // main body
+  px(ctx, gx + 2, gy + 4, 4, 1, C.steel); // taper
+  px(ctx, gx + 3, gy + 5, 2, 1, C.steel); // point
+  px(ctx, gx + 1, gy, 6, 1, "#e0e4ee"); // bright top rim
+  px(ctx, gx + 1, gy, 1, 4, C.steelDark); // left edge shade
+  px(ctx, gx + 6, gy, 1, 4, C.steelDark); // right edge shade
+  px(ctx, gx + 1, gy + 2, 6, 1, C.bronze); // emblem stripe
 };
 
 const chestArmor: IconFn = (ctx, gx, gy) => {
   px(ctx, gx + 1, gy + 1, 6, 1, C.steelDark); // shoulders
-  px(ctx, gx + 1, gy + 2, 6, 4, C.steel); // breastplate
-  px(ctx, gx + 3, gy + 1, 2, 1, C.dark); // neck opening
-  px(ctx, gx + 3, gy + 2, 1, 4, C.steelDark); // center seam
+  px(ctx, gx + 1, gy + 2, 6, 3, C.steel); // upper chest
+  px(ctx, gx + 2, gy + 5, 4, 1, C.steel); // taper toward waist
+  px(ctx, gx + 3, gy + 1, 2, 1, C.dark); // neckline
+  px(ctx, gx + 2, gy + 3, 1, 1, C.steelDark); // pec definition
+  px(ctx, gx + 5, gy + 3, 1, 1, C.steelDark);
   px(ctx, gx + 1, gy + 6, 6, 1, C.leather); // belt
 };
 
