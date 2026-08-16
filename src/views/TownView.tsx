@@ -11,6 +11,7 @@ import { drawCharacter } from "../rendering/CharacterRenderer";
 import { hash2d, px, rect } from "../rendering/PixelRenderer";
 import type { AdventurerState } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
+import { worldPointToBuilding } from "../utils/TownBuildings";
 
 // States where the adventurer is outdoors in town and belongs in this scene.
 // `resting` stays in: they're indoors, but the sprite by their house reads as
@@ -36,20 +37,19 @@ export function TownView({
 
   // Clicking the shop building enters the Shop View; clicking the east gate
   // follows the adventurers out to the Wilderness View. Map the click from CSS
-  // pixels back into world coordinates (the canvas is scaled to fit the window).
+  // pixels back into world coordinates (the canvas is scaled to fit the window),
+  // then hit-test against the building registry (spec V2.8, issue #56) instead
+  // of two hand-written bboxes.
   const handleClick = (e: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const r = canvas.getBoundingClientRect();
     const wx = ((e.clientX - r.left) / r.width) * WORLD_W;
     const wy = ((e.clientY - r.top) / r.height) * WORLD_H;
-    // Shop footprint (walls + roof), with a little slack for easy clicking.
-    if (wx >= TOWN.shop.x - 20 && wx <= TOWN.shop.x + 96 && wy >= TOWN.shop.y - 24 && wy <= TOWN.shop.y + 64) {
+    const hit = worldPointToBuilding(engine.state.buildings, wx, wy);
+    if (hit?.id === "shop") {
       onEnterShop();
-      return;
-    }
-    // Gate pillars plus the road between them.
-    if (wx >= TOWN.gate.x - 24 && wy >= TOWN.gate.y - 40 && wy <= TOWN.gate.y + 140) {
+    } else if (hit?.id === "gate") {
       onEnterWilderness();
     }
   };

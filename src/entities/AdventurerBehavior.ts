@@ -9,24 +9,38 @@ import { recordReactionSeen, recordSale, recordWalkout } from "../game/Ledger";
 import { resolveAdventure, fallbackAskPrice } from "../game/Combat";
 import { makeItem } from "./Item";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
-
-// Landmarks duplicated from GameEngine's TOWN to avoid an import cycle;
-// GameEngine re-exports TOWN from here as the single source of truth.
-export const TOWN = {
-  shop: { x: 120, y: 140 },
-  shopDoor: { x: 156, y: 200 },
-  tavern: { x: 640, y: 120 },
-  tavernDoor: { x: 668, y: 172 },
-  houses: [
-    { x: 200, y: 420 },
-    { x: 360, y: 460 },
-    { x: 560, y: 430 },
-  ],
-  gate: { x: 880, y: 300 },
-  square: { x: 440, y: 280 },
-} as const;
+import { getBuilding } from "../utils/TownBuildings";
 
 const WALK_SPEED = 60; // world px/sec at 1×
+
+// ---------- town geometry lookups (spec V2.8, issue #56) ----------
+// Landmarks used to be a frozen TOWN literal duplicated here; they now live
+// on GameState.buildings (the registry), reached through GameState which
+// every behavior function already receives — no import cycle needed.
+
+function mustGetBuilding(s: GameState, id: string) {
+  const b = getBuilding(s.buildings, id);
+  if (!b) throw new Error(`town building missing from registry: ${id}`);
+  return b;
+}
+
+/** A building's anchor point (footprint origin) — its render/movement
+ *  landmark for buildings with no separate door. */
+function anchorOf(s: GameState, id: string): { x: number; y: number } {
+  const { footprint } = mustGetBuilding(s, id);
+  return { x: footprint.x, y: footprint.y };
+}
+
+/** A building's walk-to interaction point, falling back to its anchor. */
+function doorOf(s: GameState, id: string): { x: number; y: number } {
+  const b = mustGetBuilding(s, id);
+  return b.door ?? { x: b.footprint.x, y: b.footprint.y };
+}
+
+/** Houses in registry order (matches the old TOWN.houses array order). */
+function houseAnchors(s: GameState): { x: number; y: number }[] {
+  return s.buildings.filter((b) => b.kind === "house").map((b) => ({ x: b.footprint.x, y: b.footprint.y }));
+}
 
 export interface BehaviorContext {
   /** Current plan for the day; set at dawn (fallback immediately, AI may revise). */
@@ -103,8 +117,9 @@ export function stepAdventurer(
         bc.nightRunDay = s.day;
         bc.onNightRun = true;
         a.state = "adventuring";
-        a.position.x = TOWN.gate.x;
-        a.position.y = TOWN.gate.y + 30;
+        const gate = doorOf(s, "gate");
+        a.position.x = gate.x;
+        a.position.y = gate.y + 30;
         out.messages.push(systemMsg(s, `${a.name} slipped out of the gate into the dark...`));
         break;
       }
@@ -121,7 +136,7 @@ export function stepAdventurer(
       }
       // Route by plan and phase.
       if (s.phase === "night") {
-        headHome(a, bc);
+        headHome(a, bc, s);
         break;
       }
       // Departures wait out the wake-up stagger set in beginDay(); without the
@@ -133,28 +148,32 @@ export function stepAdventurer(
         (s.phase === "dawn" || s.phase === "morning")
       ) {
         a.state = "heading_to_shop";
-        bc.target = TOWN.shopDoor;
+        bc.target = doorOf(s, "shop");
         break;
       }
       if (bc.lootToSell.length > 0 && s.phase === "evening") {
         a.state = "returning"; // reuse the walk-to-shop-then-sell path
-        bc.target = TOWN.shopDoor;
+        bc.target = doorOf(s, "shop");
         break;
       }
       if (bc.plan === "adventure" && !bc.adventured && bc.timer <= 0 && s.phase === "afternoon") {
         a.state = "heading_to_gate";
-        bc.target = { x: TOWN.gate.x, y: TOWN.gate.y + 30 };
+        const gate = doorOf(s, "gate");
+        bc.target = { x: gate.x, y: gate.y + 30 };
         break;
       }
       // Idle drift: pick a fresh spot each time (random is fine here — this
       // is ambience, not a §6 verdict; the old deterministic pick meant one
       // walk per day and then a statue).
       if (!bc.target && bc.timer <= 0) {
+        const tavernDoor = doorOf(s, "tavern");
+        const shop = anchorOf(s, "shop");
+        const houses = houseAnchors(s);
         const spots = [
-          TOWN.square,
-          { x: TOWN.tavernDoor.x, y: TOWN.tavernDoor.y + 20 },
-          { x: TOWN.shop.x + 60, y: TOWN.shop.y + 90 },
-          { x: TOWN.houses[1].x + 20, y: TOWN.houses[1].y - 40 },
+          anchorOf(s, "square"),
+          { x: tavernDoor.x, y: tavernDoor.y + 20 },
+          { x: shop.x + 60, y: shop.y + 90 },
+          { x: houses[1].x + 20, y: houses[1].y - 40 },
         ];
         const p = spots[Math.floor(Math.random() * spots.length)];
         bc.target = {
@@ -199,7 +218,7 @@ export function stepAdventurer(
           a.browsingItemId = next;
           bc.timer = browseTime(a);
         } else {
-          leaveShop(a, bc);
+          leaveShop(a, bc, s);
         }
       }
       break;
@@ -212,7 +231,7 @@ export function stepAdventurer(
       if (item && item.salePrice !== null && item.salePrice <= a.gold) {
         completePurchase(a, item, idx, s, out);
       }
-      leaveShop(a, bc);
+      leaveShop(a, bc, s);
       break;
     }
 
@@ -262,9 +281,10 @@ export function stepAdventurer(
         }
 
         a.state = "returning";
-        bc.target = bc.lootToSell.length > 0 ? TOWN.shopDoor : TOWN.square;
-        a.position.x = TOWN.gate.x;
-        a.position.y = TOWN.gate.y + 30;
+        bc.target = bc.lootToSell.length > 0 ? doorOf(s, "shop") : anchorOf(s, "square");
+        const gate = doorOf(s, "gate");
+        a.position.x = gate.x;
+        a.position.y = gate.y + 30;
         out.messages.push(
           systemMsg(
             s,
@@ -340,7 +360,7 @@ export function stepAdventurer(
 
   // Night curfew for everyone still out (night owls come in Phase 6).
   if (s.phase === "night" && a.state !== "resting" && a.state !== "adventuring") {
-    headHome(a, bc);
+    headHome(a, bc, s);
     if (walkToward(a, bc, dt)) a.state = "resting";
   }
 
@@ -404,16 +424,17 @@ function pickShelfItem(a: Adventurer, s: GameState, excludeId?: string | null): 
   return scored[0].it.id;
 }
 
-function leaveShop(a: Adventurer, bc: BehaviorContext): void {
+function leaveShop(a: Adventurer, bc: BehaviorContext, s: GameState): void {
   a.state = "wandering";
   bc.shopped = true;
   bc.browsingItem = null;
   a.browsingItemId = null;
   // Scatter across the square instead of everyone converging on one pixel and
   // standing in each other (#50).
+  const square = anchorOf(s, "square");
   bc.target = {
-    x: TOWN.square.x + Math.floor(Math.random() * 120) - 60,
-    y: TOWN.square.y + Math.floor(Math.random() * 80) - 20,
+    x: square.x + Math.floor(Math.random() * 120) - 60,
+    y: square.y + Math.floor(Math.random() * 80) - 20,
   };
 }
 
@@ -474,8 +495,9 @@ function recordReaction(a: Adventurer, item: Item, out: StepResult, s: GameState
 
 // ---------- movement ----------
 
-function headHome(a: Adventurer, bc: BehaviorContext): void {
-  const home = TOWN.houses[a.appearance.skin % TOWN.houses.length];
+function headHome(a: Adventurer, bc: BehaviorContext, s: GameState): void {
+  const houses = houseAnchors(s);
+  const home = houses[a.appearance.skin % houses.length];
   bc.target = { x: home.x + 16, y: home.y + 40 };
 }
 

@@ -153,6 +153,26 @@ describe("save/load", () => {
     localStorage.setItem("wdsa_save_v1", JSON.stringify({ hello: "world" }));
     expect(loadGame()).toBeNull();
   });
+
+  it("round-trips the building registry (#56)", () => {
+    const e = freshEngine();
+    expect(e.state.buildings.length).toBeGreaterThan(0);
+    saveGame(e.state);
+    const loaded = loadGame();
+    expect(loaded!.buildings).toEqual(e.state.buildings);
+  });
+
+  it("defaults buildings for a save written before the registry existed (#56)", () => {
+    const e = freshEngine();
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem("wdsa_save_v1")!);
+    delete raw.buildings;
+    localStorage.setItem("wdsa_save_v1", JSON.stringify(raw));
+    const loaded = loadGame();
+    expect(loaded!.buildings.length).toBeGreaterThan(0);
+    expect(loaded!.buildings.some((b) => b.id === "shop")).toBe(true);
+    expect(loaded!.buildings.some((b) => b.id === "gate")).toBe(true);
+  });
 });
 
 describe("game over", () => {
