@@ -291,3 +291,26 @@ describe("pricing defaults", () => {
     }
   });
 });
+
+describe("shelveItem", () => {
+  it("moves a stockroom item to the first empty shelf", async () => {
+    const { makeItem } = await import("../entities/Item");
+    const e = new GameEngine(false);
+    e.state.shelves[3] = null;
+    const item = makeItem("golem_plate");
+    e.state.inventory.push(item);
+    expect(e.shelveItem(item.id)).toBe(true);
+    expect(e.state.shelves.at(3)?.id).toBe(item.id);
+    expect(e.state.inventory).toHaveLength(0);
+  });
+
+  it("refuses when shelves are full or item unknown", async () => {
+    const { makeItem } = await import("../entities/Item");
+    const e = new GameEngine(false); // starts with all 12 slots filled
+    const item = makeItem("rations");
+    e.state.inventory.push(item);
+    expect(e.shelveItem(item.id)).toBe(false); // no space
+    expect(e.shelveItem("nope")).toBe(false); // unknown id
+    expect(e.state.inventory).toHaveLength(1); // untouched
+  });
+});

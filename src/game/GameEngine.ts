@@ -242,6 +242,18 @@ export class GameEngine {
     return null;
   }
 
+  /** Move a stockroom item onto the first empty shelf (issue #46). */
+  shelveItem(itemId: string): boolean {
+    const s = this.state;
+    const idx = s.inventory.findIndex((it) => it.id === itemId);
+    if (idx === -1) return false;
+    const slot = s.shelves.findIndex((sl) => sl === null);
+    if (slot === -1) return false;
+    s.shelves[slot] = s.inventory[idx];
+    s.inventory.splice(idx, 1);
+    return true;
+  }
+
   /** Cost of the next shop expansion, or null at max level (§5). */
   nextExpansionCost(): number | null {
     return EXPANSION_COSTS[this.state.shopLevel - 1] ?? null;
