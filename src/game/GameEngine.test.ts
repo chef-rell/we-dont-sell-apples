@@ -166,3 +166,33 @@ describe("token budget", () => {
     expect(b.callsToday).toBe(0);
   });
 });
+
+describe("shop expansion", () => {
+  it("charges the tier cost, adds slots, and surfaces stockroom overflow", async () => {
+    const { makeItem } = await import("../entities/Item");
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    e.state.gold = 1000;
+    e.state.inventory.push(makeItem("iron_sword"), makeItem("rations"));
+    expect(e.nextExpansionCost()).toBe(300);
+    expect(e.expandShop()).toBe(true);
+    expect(e.state.gold).toBe(700);
+    expect(e.state.shopLevel).toBe(2);
+    expect(e.state.shelves.length).toBe(16);
+    // Stockroom overflow moved onto the new shelves
+    expect(e.state.inventory.length).toBe(0);
+    expect(e.state.shelves.filter(Boolean).length).toBe(14); // 12 starting + 2
+  });
+
+  it("refuses when unaffordable and at max level", () => {
+    const e = new GameEngine(false);
+    e.state.gold = 100;
+    expect(e.expandShop()).toBe(false);
+    e.state.gold = 10_000;
+    expect(e.expandShop()).toBe(true); // → 2
+    expect(e.expandShop()).toBe(true); // → 3
+    expect(e.expandShop()).toBe(true); // → 4
+    expect(e.nextExpansionCost()).toBeNull();
+    expect(e.expandShop()).toBe(false); // max
+  });
+});
