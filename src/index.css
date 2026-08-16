@@ -54,6 +54,9 @@ body {
 .hud-time {
   color: var(--text-light);
   text-transform: capitalize;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .hud-controls {

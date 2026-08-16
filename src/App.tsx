@@ -8,6 +8,7 @@ import { useGameAudio } from "./audio/useGameAudio";
 import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
 import { ChatPanel } from "./ui/ChatPanel";
+import { DayClock } from "./ui/DayClock";
 import { NightSummary } from "./ui/NightSummary";
 import { OfflineSummary } from "./ui/OfflineSummary";
 import { SettingsPanel } from "./ui/SettingsPanel";
@@ -82,7 +83,10 @@ export default function App() {
           <span className="coin" /> {hud.gold}g
         </div>
         <div className="hud-time">
-          Day {hud.day} · {hud.phase}
+          <DayClock engine={engine} />
+          <span>
+            Day {hud.day} · {hud.phase}
+          </span>
         </div>
         <div className="hud-controls">
           <button
