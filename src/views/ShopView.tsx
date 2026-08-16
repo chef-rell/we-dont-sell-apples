@@ -235,10 +235,16 @@ export function renderShop(
   rect(ctx, WORLD_W / 2 - 180, counterY + 40, 360, 24, "#4a3220"); // counter front
 
   // ---- Customers ----
-  // Sorted by id so a customer keeps the same spot frame to frame. Drawn after
-  // the counter: they're on the near side of it, browsing the room.
+  // Everyone inside the shop: shoppers and adventurers waiting to sell loot
+  // (TownView stops drawing them outdoors, issue #15). Sorted by id so a
+  // customer keeps the same spot frame to frame, and drawn after the counter
+  // since they stand on the near side of it.
   const customers = s.adventurers
-    .filter((a) => a.alive && (a.state === "browsing" || a.state === "buying"))
+    .filter(
+      (a) =>
+        a.alive &&
+        (a.state === "browsing" || a.state === "buying" || a.state === "selling_loot"),
+    )
     .sort((a, b) => (a.id < b.id ? -1 : 1));
   const idleFrame = (Math.floor(performance.now() / 500) % 2) as 0 | 1;
   const lanes = CUSTOMER_SPOT_X.length;
