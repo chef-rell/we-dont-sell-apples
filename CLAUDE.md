@@ -39,6 +39,29 @@ On session start and periodically: `gh pr list --search "head:dev-b"`. For each 
 
 Use agents freely — announce what you're spinning up before launching. For coding tasks, use Opus as the orchestrator (planning, design, review) and delegate implementation to Sonnet agents (`model: "sonnet"`) to save tokens. Only use Opus-tier agents when the subtask needs deep reasoning.
 
+## Issue monitoring (both devs)
+
+Each dev's Claude agent should set up automated issue monitoring on session start. This keeps work flowing without waiting for someone to manually check GitHub.
+
+**Setup:** Ask your Claude to run `/schedule` and create a recurring agent that:
+1. Runs every 30 minutes during work hours
+2. Checks `gh issue list --assignee <your-github-username> --state open --json number,title,labels`
+3. Sends a PushNotification when new issues appear
+4. Optionally begins planning/implementation on new issues in your domain
+
+**Dev A (Mr. G / chef-rell):** monitors issues in `src/game/`, `src/entities/`, `src/utils/`
+**Dev B (Basmine / OverlookBoz):** monitors issues in `src/rendering/`, `src/views/`, `src/ui/`, `src/audio/`
+
+Alternatively, start a persistent Monitor in any session:
+```bash
+# Poll for new issues assigned to you
+last=""; while true; do
+  cur=$(gh issue list --assignee <you> --state open --json number,title 2>/dev/null)
+  [ "$cur" != "$last" ] && [ -n "$last" ] && echo "$cur"
+  last="$cur"; sleep 120
+done
+```
+
 ## Deployment
 
 Railway auto-deploys `main` (project `we-dont-sell-apples`, service `web`, Node 22 pinned via `.nvmrc`/engines). Verify after merge: `railway status`, then curl the URL in README. Build failures so far have only ever been Node-version drift.
