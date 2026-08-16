@@ -291,9 +291,12 @@ plus #65, a test-determinism fix). Build notes for later phases:
    movement), and the equipped weapon renders as one uniform blade regardless
    of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
 
-**2026-08-16 — Phase 1 iso town complete** (issue #70). The legacy `TOWN`
-shim is deleted (note 2 resolved); `TownView` reads `GameState.buildings`
-directly through `src/rendering/iso.ts`. Build notes:
+**2026-08-16 — Phase 1 complete, tagged `v2.1-iso-town`** (issues #69 iso
+diagonal facings, #70 iso town view, #71 `wdsa_save_v2` key switch — PRs
+#72, #74, #73). The legacy `TOWN` shim is deleted (note 2 resolved);
+`TownView` reads `GameState.buildings` directly through
+`src/rendering/iso.ts`. Deployed saves reset at this point by design
+(V2.11); the v1 save survives untouched under its old key. Build notes:
 
 1. Note 3's registry split (generous click `footprint` vs true `door`
    anchor) is *not* cleaned up — the shop's footprint is still click-test
