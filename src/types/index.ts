@@ -140,6 +140,7 @@ export interface AdventureOutcome {
   damageTaken: number;
   survived: boolean;
   lootItemKeys: string[]; // ITEM_DEFS keys found
+  goldFound: number; // coin injected by the wilderness (the economy's faucet)
   narration: string | null; // AI text, arrives async; null until then/fallback
 }
 

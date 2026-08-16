@@ -1098,3 +1098,48 @@ This spec is a starting point, not a contract. The design decisions in this docu
 - The visual style prototypes in the project chat used a 4px base pixel grid — maintain consistency
 - When in doubt about a design decision, choose the option that makes adventurers feel more alive
 - Test the Haiku integration early — if there are API issues, the fallback system needs to be solid enough to carry the game on its own
+
+---
+
+## 22. IMPLEMENTATION DEVIATIONS LOG (per §20 rule 4)
+
+Decisions made during the build that deviate from or refine this spec. Each was
+made for a reason; revisit freely at the playtest gate.
+
+**Economy & loot**
+- **Monsters drop gold** (`AdventureOutcome.goldFound`, scaled to monster HP). Not in §8 —
+  added because the balance harness showed the town's money supply was otherwise fixed:
+  once adventurers spent their starting gold, sales stalled at every markup. The wilderness
+  is the economy's faucet; the wholesale cart is the drain.
+- **Wholesale cart appears every afternoon** (not "periodically", §5): doubles as the §4
+  dead-time activity. Sells 4-6 rotating basics at base value; leaves at evening.
+- **Loot offers are one-at-a-time per adventurer** and expire at night; an open offer is
+  withdrawn at night and its item re-queued for the next evening. Declined offers are
+  withdrawn for good (the player said no). Nothing strands.
+- **Deterministic loot ask price**: base value × (1 + haggle×0.4 − relationship×0.15),
+  clamped 0.85-1.5×. The AI loot-pricing decision point (§7 #3) is not yet wired.
+
+**AI integration**
+- Morning planning is the only live per-day AI decision point so far; shop-visit flavor
+  and town chat are Phase 8. The fallback plan activates instantly at dawn and the AI
+  refines it if/when the call returns (§7 latency rule).
+- Purchase verdicts and reactions are 100% deterministic (§6 as revised) — implemented in
+  `Economy.ts` with the ±15% bounded shift. No AI call can change a verdict.
+
+**Contract additions (all additive)**
+- `Adventurer.browsingItemId` — the shelf item under examination, so views can draw
+  reaction bubbles for the real item (issue #12).
+- `AdventureOutcome`, `LootOffer`, `MerchantState`, `PriceRecord`;
+  `GameState.lootOffers`, `recentOutcomes`, `merchant`, `pricingHistory`.
+
+**Combat (§8)**
+- Win chance = power/(power+threat) × 1.3, clamped [0.15, 0.95]; power = level×3 +
+  weapon×2 + armor×1.5 + accessory×0.5. Death only on a loss whose damage exceeds HP.
+- Shadow Cave gates on day ≥ 3 AND (risk ≥ 60 OR power ≥ 14).
+
+**Process**
+- v1 target is Phases 1-5 with a hard playtest gate before Phase 6 (per revised §15).
+- Deployed builds are deterministic-only; no API key ever reaches Railway (§20 security).
+- Tests: `npm test` (vitest) covers §6 band math, the economic loop, loot re-queue,
+  merchant cycle, save/load, game over, and budget reset. `scripts/balance-report.ts`
+  plays N headless days across markup strategies for balance comparisons.
