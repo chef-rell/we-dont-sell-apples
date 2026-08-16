@@ -11,8 +11,10 @@ import { sound } from "./audio/SoundManager";
 import { useGameAudio } from "./audio/useGameAudio";
 import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
+import { CharacterCreation } from "./ui/CharacterCreation";
 import { ChatPanel } from "./ui/ChatPanel";
 import { DayClock } from "./ui/DayClock";
+import { HelperChip, HelperPanel } from "./ui/HelperPanel";
 import { NightSummary } from "./ui/NightSummary";
 import { OfflineSummary } from "./ui/OfflineSummary";
 import { SettingsPanel } from "./ui/SettingsPanel";
@@ -42,6 +44,7 @@ export default function App() {
       const s = engine.state;
       setHud({ day: s.day, phase: s.phase, gold: s.gold, speed: s.speed });
       setView(s.view); // stay in sync if the engine changes the view itself
+      setHelperReady(s.helper !== null);
     }, 250);
     return () => clearInterval(id);
   }, [engine]);
@@ -89,6 +92,8 @@ export default function App() {
   useGameAudio(engine);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [muted, setMuted] = useState(sound.isMuted);
+  const [helperReady, setHelperReady] = useState(engine.state.helper !== null);
+  const [helperPanelOpen, setHelperPanelOpen] = useState(false);
   const toggleMute = () => {
     const next = !muted;
     sound.setMuted(next);
@@ -116,6 +121,7 @@ export default function App() {
           <span>
             Day {hud.day} · {hud.phase}
           </span>
+          {helperReady && <HelperChip engine={engine} onOpen={() => setHelperPanelOpen(true)} />}
         </div>
         <div className="hud-controls">
           <button
@@ -172,6 +178,8 @@ export default function App() {
         <div style={stageStyle}>
           <div style={centerCellStyle}>
             {settingsOpen && <SettingsPanel engine={engine} onClose={() => setSettingsOpen(false)} />}
+            {!helperReady && <CharacterCreation engine={engine} onCreated={() => setHelperReady(true)} />}
+            {helperPanelOpen && <HelperPanel engine={engine} onClose={() => setHelperPanelOpen(false)} />}
             <OfflineSummary engine={engine} />
             <NightSummary engine={engine} />
             {view !== "gameover" && <Toasts engine={engine} />}

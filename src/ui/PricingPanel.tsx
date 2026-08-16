@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import type { GameEngine } from "../game/GameEngine";
 import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
 import type { Item } from "../types";
 import { PALETTE, PX } from "../utils/constants";
@@ -26,6 +27,7 @@ export function PricingPanel({
   suggestion,
   onSetPrice,
   onClose,
+  engine,
 }: {
   item: Item;
   /** Engine's opening suggestion: last SOLD price (proven to clear) or last
@@ -33,6 +35,12 @@ export function PricingPanel({
   suggestion?: { price: number; fromSale: boolean } | null;
   onSetPrice: (price: number | null) => void;
   onClose: () => void;
+  /** Optional: when present, surfaces the L3+ shop-track helper's pricing
+   *  recommendation (spec V2.7, issue #83). `engine.suggestPrice(item)`
+   *  already encodes the full eligibility gate (helper exists, on shop
+   *  duty, level 3+) — null whenever ineligible, so no gate is re-derived
+   *  here. */
+  engine?: GameEngine;
 }) {
   const initialFor = (it: Item) =>
     it.salePrice ?? suggestion?.price ?? lastPriceByName.get(it.name) ?? DEFAULT_PRICE;
@@ -72,6 +80,11 @@ export function PricingPanel({
 
   const bump = (delta: number) => commit(price + delta);
 
+  // Recommendation surface only (spec V2.7, issue #83): fills the input via
+  // the same commit() path the player's own +/- buttons use, never bypasses
+  // it or touches Economy.ts's §6 verdict logic.
+  const suggested = engine ? engine.suggestPrice(item) : null;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -100,6 +113,12 @@ export function PricingPanel({
           </div>
         </div>
       </div>
+
+      {engine && suggested !== null && (
+        <button style={suggestionChip} onClick={() => commit(suggested)}>
+          {engine.state.helper!.name} suggests: {suggested}g
+        </button>
+      )}
 
       <div style={priceRow}>
         <RepeatButton label="−10" onStep={() => bump(-10)} />
@@ -294,6 +313,17 @@ const smallButton: CSSProperties = {
   color: PALETTE.textLight,
   fontFamily: "monospace",
   fontSize: 12,
+  padding: "4px 8px",
+  cursor: "pointer",
+};
+
+const suggestionChip: CSSProperties = {
+  alignSelf: "flex-start",
+  background: "#2a2a44",
+  border: `2px solid ${PALETTE.gold}`,
+  color: PALETTE.gold,
+  fontFamily: "monospace",
+  fontSize: 11,
   padding: "4px 8px",
   cursor: "pointer",
 };
