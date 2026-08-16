@@ -13,6 +13,7 @@ import type {
   HelperTrait,
   Item,
   ItemRarity,
+  StaffRole,
 } from "../types";
 import { advanceTime, phaseFor } from "./DayNightCycle";
 import { generateUniqueName } from "../utils/names";
@@ -24,7 +25,17 @@ import { arrivalBonus, processDayEnd } from "./MoraleSystem";
 import { generateAdventureScript } from "./Combat";
 import { makeRng } from "../utils/rng";
 import { accrueXp, createHelper, suggestPriceFor } from "../entities/Helper";
-import { freshLedger, recordDonation, recordLootBuy, recordRestock, rotateLedger } from "./Ledger";
+import { freshLedger, recordDonation, recordLootBuy, recordPayroll, recordRestock, rotateLedger } from "./Ledger";
+import {
+  buildCraftStructure,
+  canBuildCraftStructure,
+  canForgeOrder,
+  canHireStaff,
+  type CraftBuildingKind,
+  forgeOrder as forgeOrderImpl,
+  hireStaff as hireStaffImpl,
+  runCraftProduction,
+} from "./Property";
 import {
   fallbackReply,
   freshChatterState,
@@ -273,8 +284,25 @@ export class GameEngine {
 
   private onNewDay(): void {
     const s = this.state;
+    // Hired-staff payroll (spec V2.9, issue #91): each staffer's cut of
+    // YESTERDAY's closing revenue, deducted and logged against that same
+    // ledger entry right before it rotates into history — a no-op loop
+    // while state.staff is empty (every pre-#91 save/game).
+    for (const st of s.staff) {
+      const pay = Math.round(st.cut * s.ledger.revenue);
+      if (pay > 0) {
+        s.gold -= pay;
+        recordPayroll(s, pay);
+      }
+    }
     rotateLedger(s, s.day); // close yesterday's book before anything else
     s.currentScript = null; // the day's party script doesn't survive rollover (spec V2.5)
+
+    // Craft production (spec V2.9, issue #91): garden/lab output, gated on
+    // helper assignment or hired staff presence exactly per the issue's
+    // rates. A complete no-op with zero craft buildings (every game before
+    // a garden/lab is built, and the balance harness's no-craft path).
+    runCraftProduction(s);
 
     // Helper XP accrual (spec V2.7, issue #83): once per rollover, off
     // whatever the sticky `assignment` was through the day that just ended
@@ -400,18 +428,90 @@ export class GameEngine {
     return true;
   }
 
-  /** Permanent, one-way specialization (spec V2.7): unlocks day 10+;
-   *  "craft" is rejected until Phase 4 actually builds it out (V2.15 note —
-   *  the UI shows it locked on a false return). Already having a track
-   *  chosen makes this a no-op false — the choice can't be revisited. */
+  /** Permanent, one-way specialization (spec V2.7): unlocks day 10+.
+   *  "craft" was rejected through Phase 4a; unlocked as of #91 — garden/
+   *  lab/forge build gates key off `helper.track === "craft"` (see
+   *  game/Property.ts). Already having a track chosen makes this a no-op
+   *  false — the choice can't be revisited. */
   chooseTrack(track: HelperTrack): boolean {
     const s = this.state;
     if (!s.helper) return false;
     if (s.day < 10) return false;
     if (s.helper.track !== "none") return false;
-    if (track === "none" || track === "craft") return false;
+    if (track === "none") return false;
     s.helper.track = track;
+    s.helper.trackChosenDay = s.day;
     return true;
+  }
+
+  // ---------- Phase 4b: craft property, production, hired staff (spec V2.9, issue #91) ----------
+  // Small, delegating wrappers — the actual gating/production math lives in
+  // src/game/Property.ts (same shape as Forge.ts's 4a repair math / #83's
+  // Helper.ts split).
+
+  /** Build a craft-track structure once its stage is unlocked: garden
+   *  (150g, L1 gardening), alchemy_lab (400g + 2 echo_crystal, L2
+   *  alchemy), forge (800g + 2 golem_plate + 1 core_shard, L3
+   *  blacksmithing). Fixed plot adjacent to the shop; enters
+   *  `state.buildings` clickable so a later phase can open its panel. */
+  buildStructure(kind: CraftBuildingKind): boolean {
+    const s = this.state;
+    const built = buildCraftStructure(s, kind);
+    if (!built) return false;
+    this.pushMessage({
+      id: `sys-build-${s.day}-${kind}`,
+      senderId: "system",
+      senderName: "Town",
+      type: "system",
+      content: `The ${buildingLabel(kind)} is built and ready.`,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
+    return true;
+  }
+
+  /** Read-only affordability/gating check for a build-structure panel. */
+  canBuildStructure(kind: CraftBuildingKind): boolean {
+    return canBuildCraftStructure(this.state, kind);
+  }
+
+  /** Hire a townsperson for a craft/shop role (spec V2.9's escape hatch):
+   *  200g fee, 8% of daily sales revenue as ongoing payroll (paid at
+   *  rollover). Available once the corresponding stage's helper-unlock
+   *  reference day + 12 has passed, or reputation >= 0.3 — whichever comes
+   *  first (see `Property.staffHireUnlockDay`). */
+  hireStaff(role: StaffRole): boolean {
+    const s = this.state;
+    const staff = hireStaffImpl(s, role);
+    if (!staff) return false;
+    this.pushMessage({
+      id: `sys-hire-${s.day}-${staff.id}`,
+      senderId: "system",
+      senderName: "Town",
+      type: "system",
+      content: `${staff.name} has been hired to work the ${role}.`,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
+    return true;
+  }
+
+  /** Read-only hire-eligibility check for a staffing panel. */
+  canHireStaff(role: StaffRole): boolean {
+    return canHireStaff(this.state, role);
+  }
+
+  /** Player-triggered forge crafting (spec V2.9): 2 monster materials +
+   *  half baseValue in gold -> a forged (origin "forged", common rarity —
+   *  see Property.ts's judgment-call doc) piece of gear, once per day.
+   *  Helper-only; hired forge staff run repairs, never crafting. */
+  forgeOrder(defKey: string): boolean {
+    return forgeOrderImpl(this.state, defKey) !== null;
+  }
+
+  /** Read-only forge-order eligibility check for a crafting panel. */
+  canForgeOrder(defKey: string): boolean {
+    return canForgeOrder(this.state, defKey);
   }
 
   /** Deterministic pricing recommendation (spec V2.7, L3+ shop track only)
@@ -757,6 +857,7 @@ function createInitialState(): GameState {
     currentScript: null,
     helper: null,
     shopkeeperAppearance: null,
+    staff: [],
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
@@ -766,6 +867,13 @@ function createInitialState(): GameState {
     stats: { totalGoldEarned: 0, itemsSold: 0, adventurersServed: 0, adventurersLost: 0 },
     lastSavedAt: null,
   };
+}
+
+/** Player-facing name for a "the X is built" system message (issue #91). */
+function buildingLabel(kind: CraftBuildingKind): string {
+  if (kind === "garden") return "garden";
+  if (kind === "alchemy_lab") return "alchemy lab";
+  return "forge";
 }
 
 // Starting cast per spec §7: warrior, ranger, rogue, mage, cleric, veteran.

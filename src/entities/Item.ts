@@ -42,6 +42,13 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   echo_crystal: { name: "Echo Crystal", category: "loot", baseValue: 22, quality: 3, icon: "gem" },
   core_shard: { name: "Core Shard", category: "loot", baseValue: 35, quality: 4, icon: "gem" },
   golem_plate: { name: "Golem Plate", category: "loot", baseValue: 45, quality: 4, icon: "artifact" },
+  // ---- Craft-track ingredients (spec V2.9, issue #91) ----
+  // "loot" category, same as the monster-material entries above — the
+  // garden's output, consumed by the lab into a health_potion. Deliberately
+  // NOT counted as `isCraftMaterial` (game/Property.ts) so the lab's stock
+  // can't accidentally get eaten by a forge order or a repair.
+  herb_bundle: { name: "Herb Bundle", category: "loot", baseValue: 8, quality: 1, icon: "herb" },
+  moon_blossom: { name: "Moon Blossom", category: "loot", baseValue: 12, quality: 1, icon: "herb" },
 };
 
 /**

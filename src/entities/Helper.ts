@@ -118,5 +118,6 @@ export function createHelper(
     xp: 0,
     assignment: "chores",
     assignmentDay: day,
+    trackChosenDay: null,
   };
 }

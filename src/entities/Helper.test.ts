@@ -28,6 +28,7 @@ function baseHelper(overrides: Partial<Helper> = {}): Helper {
     xp: 0,
     assignment: "chores",
     assignmentDay: 1,
+    trackChosenDay: null,
     ...overrides,
   };
 }

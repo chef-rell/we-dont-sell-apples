@@ -26,3 +26,18 @@ export function generateUniqueName(takenNames: string[]): string {
   const epithet = EPITHETS[Math.floor(Math.random() * EPITHETS.length)];
   return `${first} ${epithet}`;
 }
+
+// ---- Hired staff (spec V2.9, issue #91) ----
+// A separate, non-overlapping pool: staff are townsfolk, never adventurers
+// ("townsfolk names, NOT adventurers" — see the issue's own constraint), so
+// they draw from a plain first-name list instead of FIRST/EPITHETS above.
+// Picked with Math.random at hire time (liveliness, per CLAUDE.md's
+// determinism-vs-liveliness gotcha) — never asserted on in tests.
+const TOWNSFOLK_FIRST = [
+  "Cobb", "Dally", "Ambrose", "Junia", "Thistle", "Bram", "Odessa", "Perrin",
+  "Nettie", "Fitch", "Rosamund", "Gideon", "Hollis", "Beatrix", "Wendell",
+];
+
+export function generateTownsfolkName(): string {
+  return TOWNSFOLK_FIRST[Math.floor(Math.random() * TOWNSFOLK_FIRST.length)];
+}

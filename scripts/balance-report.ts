@@ -7,6 +7,7 @@
 // Not part of the app bundle — dev tooling only.
 
 import { GameEngine } from "../src/game/GameEngine";
+import { makeItem } from "../src/entities/Item";
 
 // node has no localStorage; give persistence a throwaway one.
 const store = new Map<string, string>();
@@ -222,4 +223,139 @@ console.log(
   "\nsizes the next replacement wave to the death count instead of trickling" +
   "\nnewcomers in one at a time. '-' means that run's window ended before the" +
   "\ncondition was hit (raise DAYS to see it more reliably).",
+);
+
+// ---------- Craft scenario (spec V2.9, issue #91) ----------
+//
+// The no-craft path above is untouched by this PR (no helper is ever
+// created there, so runCraftProduction/the payroll loop are structural
+// no-ops) — this scenario exercises the NEW loop instead: a forge built
+// ~day 12, helper on craft duty, hired staff, and a steady drip of forge
+// orders + repair-fuel materials, so the ledger's new payroll/repair lines
+// actually show non-zero numbers here (CLAUDE.md's determinism discipline:
+// direct state setup / no unseeded randomness in the scenario itself).
+// Runs a fixed 30-day horizon regardless of the CLI `days` arg, so the
+// day-12 build point and several days of production after it are always in
+// the window even for a short `npx tsx scripts/balance-report.ts 7`.
+const CRAFT_HORIZON_DAYS = 30;
+
+interface CraftReport {
+  finalDay: number;
+  gold: number;
+  staffCount: number;
+  payrollTotal: number; // summed across ledgerHistory's payrollSpend
+  repairRevenueTotal: number; // summed across ledgerHistory's repairRevenue
+  forgedItemsOrdered: number;
+  herbBundleStock: number;
+  moonBlossomStock: number;
+  healthPotionStock: number;
+}
+
+function runCraftScenario(): CraftReport {
+  store.clear();
+  const e = new GameEngine(false);
+  e.state.aiMode = "off";
+  const s = e.state;
+  e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 1, hair: 1 }, "curious");
+  s.gold = 3000; // headroom for all three build costs, isolating the craft loop from the sales grind
+
+  // Ordinary shop-running policy (same shape as the STRATEGIES run() above)
+  // so this scenario's ledger has REAL revenue for payroll to cut from, and
+  // adventurers actually buy/equip/wear-down gear so a repair errand has
+  // something to fire on — a craft scenario that never prices its shelves
+  // would show payrollSpend/repairRevenue stuck at 0 for a reason that has
+  // nothing to do with the craft loop itself.
+  const priceAll = () => {
+    for (const it of [...s.shelves, ...s.inventory]) {
+      if (it && it.salePrice === null) e.setPrice(it.id, Math.max(1, Math.round(it.baseValue * 1.3)));
+    }
+  };
+  priceAll();
+
+  let built = false;
+  let forgedItemsOrdered = 0;
+  const ticksPerDay = 6000; // 10 min/day at 1x, 100ms ticks
+
+  for (let i = 0; i < CRAFT_HORIZON_DAYS * ticksPerDay; i++) {
+    e.tick(100);
+
+    if (s.merchant && s.gold > 200) {
+      for (const it of [...s.merchant.stock]) {
+        if (s.gold > 200) e.buyWholesale(it.id);
+      }
+    }
+    for (const o of [...s.lootOffers]) e.acceptLootOffer(o.id);
+    if (i % 50 === 0) priceAll();
+
+    if (!built && s.day >= 12) {
+      // Direct state setup, not a grind to day 12+ on the real XP curve
+      // (CLAUDE.md: "fixed seeds / direct state setup only" for new sims):
+      // commit the craft track and jump the helper to L3 so all three
+      // stages are unlocked the same day.
+      if (s.helper) {
+        s.helper.track = "craft";
+        s.helper.trackChosenDay = s.day;
+        s.helper.xp = 160; // L3 floor
+        s.helper.level = 3;
+        s.helper.assignment = "craft";
+      }
+      s.reputation = 0.5; // seeded so hireStaff's gate is open immediately
+      for (const [key, n] of [["echo_crystal", 2], ["golem_plate", 2], ["core_shard", 1]] as [string, number][]) {
+        for (let k = 0; k < n; k++) s.inventory.push(makeItem(key));
+      }
+      e.buildStructure("garden");
+      e.buildStructure("alchemy_lab");
+      e.buildStructure("forge");
+      e.hireStaff("garden"); // payroll sink, independent of the helper's own craft duty
+      built = true;
+    }
+
+    if (built) {
+      if (s.helper) s.helper.assignment = "craft"; // stays on craft duty every rollover
+      if (s.day % 3 === 0) {
+        // 3 materials/drip: forgeOrder consumes 2, leaving a spare in stock
+        // for a repair errand to draw on between drips.
+        s.inventory.push(makeItem("crude_hide"), makeItem("crude_hide"), makeItem("crude_hide"));
+        if (e.forgeOrder("iron_sword")) forgedItemsOrdered++;
+      }
+    }
+  }
+
+  const stockOf = (defName: string) =>
+    s.inventory.filter((it) => it.name === defName).length +
+    s.shelves.filter((it) => it?.name === defName).length;
+
+  return {
+    finalDay: s.day,
+    gold: s.gold,
+    staffCount: s.staff.length,
+    payrollTotal: s.ledgerHistory.reduce((n, l) => n + l.payrollSpend, 0),
+    repairRevenueTotal: s.ledgerHistory.reduce((n, l) => n + l.repairRevenue, 0),
+    forgedItemsOrdered,
+    herbBundleStock: stockOf("Herb Bundle"),
+    moonBlossomStock: stockOf("Moon Blossom"),
+    healthPotionStock: stockOf("Health Potion"),
+  };
+}
+
+console.log(`\nCraft scenario (spec V2.9, issue #91, ${CRAFT_HORIZON_DAYS}-day fixed horizon, forge built ~day 12):\n`);
+const craft = runCraftScenario();
+console.log(
+  [
+    `final day: ${craft.finalDay}`,
+    `gold: ${craft.gold}`,
+    `staff hired: ${craft.staffCount}`,
+    `ledger payrollSpend total: ${craft.payrollTotal}g`,
+    `ledger repairRevenue total: ${craft.repairRevenueTotal}g`,
+    `forge orders filled: ${craft.forgedItemsOrdered}`,
+    `stock — herb_bundle: ${craft.herbBundleStock}, moon_blossom: ${craft.moonBlossomStock}, health_potion: ${craft.healthPotionStock}`,
+  ].join("\n"),
+);
+console.log(
+  "\nReading it: payrollSpend > 0 is the hired-staff sink (8% of daily sales," +
+  "\npaid every rollover once staff exist); repairRevenue > 0 is the forge's" +
+  "\nrepair service actually converting a would-be rebuy into a cheaper repair" +
+  "\n(4a's prefersRepair, unchanged). Both lines are exactly 0 on the no-craft" +
+  "\npath above — this scenario is the only place in the harness that builds" +
+  "\nany garden/lab/forge at all.",
 );

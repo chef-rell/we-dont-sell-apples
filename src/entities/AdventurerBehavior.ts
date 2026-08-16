@@ -5,13 +5,14 @@
 
 import type { Adventurer, AdventureOutcome, ChatMessage, GameState, Item } from "../types";
 import { computeReaction, decidesToBuy, classifyPrice, equippedQuality } from "../game/Economy";
-import { recordReactionSeen, recordSale, recordWalkout } from "../game/Ledger";
+import { recordReactionSeen, recordRepairRevenue, recordSale, recordWalkout } from "../game/Ledger";
 import { resolveAdventure, generateAdventureScript, fallbackAskPrice } from "../game/Combat";
 import { makeRng } from "../utils/rng";
 import { makeItem } from "./Item";
 import { browseSpeedFactor } from "./Helper";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
 import { getBuilding } from "../utils/TownBuildings";
+import { planRepairErrand, resolveRepairErrand } from "../game/Property";
 
 const WALK_SPEED = 60; // world px/sec at 1×
 
@@ -66,6 +67,11 @@ export interface BehaviorContext {
   lootToSell: string[]; // item ids in a.inventory
   /** The offer currently on the table, if any. */
   pendingOfferId: string | null;
+  /** Set when this morning's errand is a forge repair trip instead of a
+   *  shop trip (spec V2.9, issue #91) — which equipped slot is being
+   *  repaired. Reuses the "heading_to_shop"/"browsing" states with the
+   *  target swapped to the forge's door; cleared on arrival either way. */
+  repairSlot: "weapon" | "armor" | null;
 }
 
 export function freshContext(): BehaviorContext {
@@ -81,6 +87,7 @@ export function freshContext(): BehaviorContext {
     onNightRun: false,
     lootToSell: [],
     pendingOfferId: null,
+    repairSlot: null,
   };
 }
 
@@ -155,8 +162,19 @@ export function stepAdventurer(
         bc.timer <= 0 &&
         (s.phase === "dawn" || s.phase === "morning")
       ) {
+        // Repair-vs-rebuy (spec V2.9, issue #91): a deterministic,
+        // §6-untouched decision (4a's prefersRepair) — when it fires, this
+        // morning's shop trip goes to the forge instead of a shelf. When
+        // it doesn't (no forge, gear's fine, no material in stock), this
+        // is byte-identical to the pre-#91 shop trip below.
+        const repair = planRepairErrand(a, s);
         a.state = "heading_to_shop";
-        bc.target = doorOf(s, "shop");
+        if (repair) {
+          bc.target = doorOf(s, "forge");
+          bc.repairSlot = repair.slot;
+        } else {
+          bc.target = doorOf(s, "shop");
+        }
         break;
       }
       if (bc.lootToSell.length > 0 && s.phase === "evening") {
@@ -202,6 +220,23 @@ export function stepAdventurer(
 
     case "heading_to_shop": {
       if (walkToward(a, bc, dt)) {
+        if (bc.repairSlot) {
+          // Forge repair errand (spec V2.9, issue #91): pay the player,
+          // consume one player-stock material, apply 4a's applyRepair —
+          // then leave WITHOUT touching the shop's browse/buy path at all
+          // (the issue's "skip buying"). A material race with another
+          // adventurer (resolveRepairErrand returns 0) just means this
+          // trip converts to nothing, same as any other browse that didn't
+          // convert.
+          const cost = resolveRepairErrand(a, s, bc.repairSlot);
+          if (cost > 0) {
+            recordRepairRevenue(s, cost);
+            out.messages.push(systemMsg(s, `${a.name} had their gear repaired at the forge for ${cost}g.`));
+          }
+          bc.repairSlot = null;
+          leaveShop(a, bc, s);
+          break;
+        }
         a.state = "browsing";
         bc.timer = browseTime(a) * waitSpeed;
         bc.browsingItem = pickShelfItem(a, s);

@@ -316,9 +316,13 @@ export type HelperTrack = "none" | "shop" | "adventure" | "craft";
 
 /** Today's job — one per day, sticky across days until
  *  `engine.setHelperAssignment()` changes it. Freely choosable among all
- *  three from day 1 (see PR body): `track` gates the PERMANENT commitment
- *  and its trait XP bonus, not which daily job is available. */
-export type HelperAssignment = "chores" | "shop" | "adventure";
+ *  three (now four) from day 1 (see PR body): `track` gates the PERMANENT
+ *  commitment and its trait XP bonus, not which daily job is available.
+ *  "craft" added spec V2.9/issue #91 — drives that day's garden/lab/forge
+ *  production (see `game/Property.ts`); exactly like shop/adventure, it's
+ *  choosable pre-day-10 but only earns the trait/XP-curve treatment once
+ *  `track === "craft"` is actually committed. */
+export type HelperAssignment = "chores" | "shop" | "adventure" | "craft";
 
 /** The player's second character (spec V2.7). Created once via
  *  `engine.createCharacters()` (issue #84 owns the creation UI); `null`
@@ -334,6 +338,37 @@ export interface Helper {
   xp: number;
   assignment: HelperAssignment;
   assignmentDay: number; // day setHelperAssignment last set it (display/analytics)
+  /** Day `engine.chooseTrack()` committed the permanent track (spec V2.9,
+   *  issue #91); null until that happens. The reference point for the
+   *  "shop" hired-staff hire-eligibility window (day >= this + 12) — craft
+   *  roles use their building's `TownBuilding.builtDay` instead, since
+   *  craft has three separately-unlocked stages, not one. Additive; `??=
+   *  null` on load for every pre-#91 save. */
+  trackChosenDay: number | null;
+}
+
+// ---------- Hired staff (spec V2.9's escape hatch, issue #91) ----------
+
+/** Which station a hire works. Mirrors the three craft buildings plus the
+ *  shop itself — "any track's buildings/services can eventually be
+ *  staffed" (spec V2.9). */
+export type StaffRole = "garden" | "lab" | "forge" | "shop";
+
+/** A hired townsperson (spec V2.9, issue #91): the helper path is strictly
+ *  better (earlier, better output, cheaper) — staff exist as the escape
+ *  hatch for the OTHER two tracks the player didn't commit their one helper
+ *  to. Always drawn from a fixed townsfolk name pool (`utils/names.ts`),
+ *  NEVER from the adventurer roster. */
+export interface Staff {
+  id: string; // UUID
+  name: string;
+  role: StaffRole;
+  hiredDay: number;
+  /** Fraction of that day's sales revenue paid as payroll at rollover
+   *  (0.08 today — spec V2.9's "8% of daily sales"). Carried per-staff
+   *  rather than read from a shared constant so a future differentiated
+   *  rate change stays a data change, not a code change. */
+  cut: number;
 }
 
 // ---------- Trade ledger (playtest feature: learn-from-stats, §17-safe) ----------
@@ -351,6 +386,15 @@ export interface DayLedger {
   restockSpend: number;
   lootSpend: number;
   donationsReceived: number;
+  /** spec V2.9/issue #91 (additive): gold paid out to hired staff as their
+   *  cut of this day's revenue — computed and deducted at the FOLLOWING
+   *  day's rollover, right before this ledger closes and rotates into
+   *  history, so the payroll line lands on the same book its cut was read
+   *  from (`GameEngine.onNewDay`). */
+  payrollSpend: number;
+  /** spec V2.9/issue #91 (additive): gold taken in from the forge's repair
+   *  service this day (`AdventurerBehavior`'s repair errand). */
+  repairRevenue: number;
 }
 
 // ---------- Chat (message bus from day one; spec §16) ----------
@@ -429,6 +473,21 @@ export interface TownBuilding {
    *  distinct from its footprint origin — e.g. the shop's actual doorway. */
   door?: { x: number; y: number };
   clickable: boolean;
+  /** True for a player-built plot structure (garden/alchemy_lab/forge —
+   *  spec V2.9, issue #91) as opposed to fixed town infrastructure.
+   *  Additive; absent/undefined on every building that predates #91 and on
+   *  every fixed-infrastructure entry from `defaultBuildings()`. */
+  playerBuilt?: true;
+  /** Day this player-built structure was completed (issue #91) — the
+   *  reference point for its hired-staff hire-eligibility window (day >=
+   *  this + 12) and its own once-per-day production/order cap. Additive;
+   *  undefined for fixed infrastructure and for saves from before #91. */
+  builtDay?: number;
+  /** Last day this building actually produced/crafted something (issue
+   *  #91) — caps the forge's player-triggered `forgeOrder()` at once per
+   *  day (garden/lab production is naturally once-per-day already, since it
+   *  only runs from `GameEngine.onNewDay()`). Additive. */
+  lastProducedDay?: number;
 }
 
 // ---------- Root state ----------
@@ -472,6 +531,11 @@ export interface GameState {
   /** The shopkeeper's own appearance, set alongside the helper at creation
    *  (spec V2.7). Additive; `loadGame()` defaults old saves to null. */
   shopkeeperAppearance: { skin: number; hair: number } | null;
+  /** Hired townspeople (spec V2.9's escape hatch, issue #91); `[]` until
+   *  `engine.hireStaff()` is called. Additive; `loadGame()` defaults old
+   *  saves to `[]` — every system already treats an empty roster as "no
+   *  hires yet". */
+  staff: Staff[];
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {
