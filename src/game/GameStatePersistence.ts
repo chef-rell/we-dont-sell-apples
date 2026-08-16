@@ -39,7 +39,9 @@ export function loadGame(): GameState | null {
     state.currentScript ??= null; // AdventureScript (spec V2.5, issue #76); old saves never had a mid-script save anyway
     if (state.currentScript) state.currentScript.helperAlong ??= false; // spec V2.7, issue #83
     state.helper ??= null; // spec V2.7, issue #83
+    if (state.helper) state.helper.trackChosenDay ??= null; // spec V2.9, issue #91
     state.shopkeeperAppearance ??= null; // spec V2.7, issue #83
+    state.staff ??= []; // spec V2.9, issue #91 (hired staff)
     for (const a of state.adventurers) {
       a.browsingItemId ??= null;
       a.memory.lowMoraleDays ??= 0;
@@ -48,7 +50,13 @@ export function loadGame(): GameState | null {
     state.autoPilotEnabled ??= false;
     state.offlineSummary ??= null;
     state.ledger ??= freshLedger(state.day);
+    state.ledger.payrollSpend ??= 0; // spec V2.9, issue #91
+    state.ledger.repairRevenue ??= 0; // spec V2.9, issue #91
     state.ledgerHistory ??= [];
+    for (const l of state.ledgerHistory) {
+      l.payrollSpend ??= 0; // spec V2.9, issue #91
+      l.repairRevenue ??= 0; // spec V2.9, issue #91
+    }
     state.lastSalePriceByName ??= {};
     // Durability/rarity forward-compat: items in all collections get
     // defaults. rarity/enchantments/origin added spec V2.9, issue #90.

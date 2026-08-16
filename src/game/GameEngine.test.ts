@@ -8,6 +8,7 @@ import { loadGame, saveGame, SAVE_KEY } from "./GameStatePersistence";
 import { makeItem } from "../entities/Item";
 import { resolveAdventure, generateAdventureScript } from "./Combat";
 import { makeRng } from "../utils/rng";
+import { STAFF_CUT } from "./Property";
 import type { Adventurer } from "../types";
 
 // Minimal localStorage stub — node has none.
@@ -815,13 +816,15 @@ describe("chooseTrack permanence and the day-10 gate (#83)", () => {
     expect(noHelper.chooseTrack("adventure")).toBe(false);
   });
 
-  it("rejects craft (Phase 4 stub) and the sentinel 'none' value", () => {
+  it("rejects the sentinel 'none' value, and accepts craft now that #91 unlocks it", () => {
     const e = freshEngine();
     e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
     e.state.day = 10;
-    expect(e.chooseTrack("craft")).toBe(false);
     expect(e.chooseTrack("none")).toBe(false);
-    expect(e.state.helper!.track).toBe("none"); // still unset — neither call took
+    expect(e.state.helper!.track).toBe("none"); // still unset — the rejected call didn't take
+    expect(e.chooseTrack("craft")).toBe(true);
+    expect(e.state.helper!.track).toBe("craft");
+    expect(e.state.helper!.trackChosenDay).toBe(10);
   });
 
   it("succeeds once day 10+ is reached and is permanent (one-way)", () => {
@@ -1013,5 +1016,187 @@ describe("helper save/load round-trip (#83)", () => {
     expect(loaded!.helper).toBeNull();
     expect(loaded!.shopkeeperAppearance).toBeNull();
     expect(loaded!.currentScript!.helperAlong).toBe(false);
+  });
+});
+
+// ---------- Craft property, production, hired staff (spec V2.9, issue #91) ----------
+// Engine-wiring integration tests; the underlying gating/production math is
+// unit-tested directly against Property.ts in Property.test.ts.
+
+describe("craft track unlock (#91): chooseTrack('craft') and buildStructure wiring", () => {
+  it("buildStructure is gated on the permanent craft track (Property.ts's job) and logs a system message", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
+    e.state.gold = 1000;
+    expect(e.buildStructure("garden")).toBe(false); // no track chosen yet
+    e.state.day = 10;
+    expect(e.chooseTrack("craft")).toBe(true);
+    expect(e.buildStructure("garden")).toBe(true);
+    const built = e.state.buildings.find((b) => b.kind === "garden");
+    expect(built?.playerBuilt).toBe(true);
+    expect(built?.clickable).toBe(true);
+    expect(e.state.messages.at(-1)?.content).toContain("garden");
+  });
+
+  it("canBuildStructure mirrors buildStructure's gating without mutating state", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
+    e.state.day = 10;
+    e.chooseTrack("craft");
+    e.state.gold = 1000;
+    expect(e.canBuildStructure("alchemy_lab")).toBe(false); // L2 needed, helper is L1
+    e.state.helper!.level = 2;
+    expect(e.canBuildStructure("alchemy_lab")).toBe(false); // still missing 2 echo_crystal
+    e.state.inventory.push(makeItem("echo_crystal"), makeItem("echo_crystal"));
+    expect(e.canBuildStructure("alchemy_lab")).toBe(true);
+    expect(e.state.buildings.some((b) => b.kind === "alchemy_lab")).toBe(false); // read-only
+  });
+});
+
+describe("hireStaff wiring and payroll at rollover (#91)", () => {
+  it("hireStaff is gated (Property.ts's job) and logs a system message on success", () => {
+    const e = freshEngine();
+    expect(e.hireStaff("shop")).toBe(false); // no reputation, no unlock reference yet
+    e.state.reputation = 0.5;
+    expect(e.canHireStaff("shop")).toBe(true);
+    expect(e.hireStaff("shop")).toBe(true);
+    expect(e.state.staff).toHaveLength(1);
+    expect(e.state.staff[0].role).toBe("shop");
+    expect(e.state.staff[0].cut).toBe(STAFF_CUT);
+    expect(e.state.messages.at(-1)?.content).toContain("hired");
+  });
+
+  it("staff take their cut of the outgoing day's revenue at rollover, logged on that ledger entry", () => {
+    const e = freshEngine();
+    e.state.reputation = 0.5;
+    e.hireStaff("shop");
+    e.state.ledger.revenue = 100; // seed today's closing revenue directly (deterministic, no sale-timing dependency)
+    const goldBefore = e.state.gold;
+    runDays(e, 1);
+    const closed = e.state.ledgerHistory.at(-1)!;
+    expect(closed.revenue).toBeGreaterThanOrEqual(100); // the seeded 100 plus whatever the day's own sales added
+    const expectedPay = Math.round(STAFF_CUT * closed.revenue);
+    expect(closed.payrollSpend).toBe(expectedPay);
+    expect(expectedPay).toBeGreaterThan(0);
+    expect(e.state.gold).toBeLessThan(goldBefore + closed.revenue); // payroll actually left the till
+  });
+});
+
+describe("forge crafting: forgeOrder wiring (#91)", () => {
+  function readyForge(e: GameEngine): void {
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
+    e.state.day = 10;
+    e.chooseTrack("craft");
+    e.state.helper!.level = 3;
+    e.state.helper!.assignment = "craft";
+    e.state.gold = 2000;
+    e.state.inventory.push(makeItem("golem_plate"), makeItem("golem_plate"), makeItem("core_shard"));
+    e.buildStructure("forge");
+  }
+
+  it("produces a forged item once materials/gold are seeded, and caps at 1/day", () => {
+    const e = freshEngine();
+    readyForge(e);
+    expect(e.canForgeOrder("iron_sword")).toBe(false); // no crude_hide materials yet
+    e.state.inventory.push(makeItem("crude_hide"), makeItem("crude_hide"));
+    expect(e.canForgeOrder("iron_sword")).toBe(true);
+    expect(e.forgeOrder("iron_sword")).toBe(true);
+    // Onto an empty shelf when there is one, else the stockroom (mirrors
+    // buyWholesale) — the starting 12 shelves are already full at day 1, so
+    // this lands in inventory; check both, matching forgeOrder's own logic.
+    const forged = [...e.state.shelves, ...e.state.inventory].find(
+      (it) => it?.origin === "forged" && it.rarity === "common",
+    );
+    expect(forged).toBeDefined();
+    expect(e.forgeOrder("iron_sword")).toBe(false); // 1/day cap
+  });
+
+  it("staff never craft, only the helper (staffed forge is repairs-only)", () => {
+    const e = freshEngine();
+    readyForge(e);
+    e.state.helper!.assignment = "shop"; // helper NOT on craft duty today
+    e.state.reputation = 0.5;
+    e.hireStaff("forge");
+    e.state.inventory.push(makeItem("crude_hide"), makeItem("crude_hide"));
+    expect(e.forgeOrder("iron_sword")).toBe(false);
+  });
+});
+
+describe("forge repair errand (#91): a damaged-gear morning trip goes to the forge instead of the shelf", () => {
+  it("repairs the item, pays the player, logs repairRevenue, and skips the normal buy path", () => {
+    const e = freshEngine();
+    e.state.buildings.push({
+      id: "forge",
+      kind: "forge",
+      footprint: { x: 100, y: 216, w: 64, h: 48 },
+      door: { x: 132, y: 264 },
+      clickable: true,
+      playerBuilt: true,
+      builtDay: e.state.day,
+    });
+    e.state.inventory.push(makeItem("crude_hide"));
+
+    // gearScore (weapon quality 3, no armor) < 4 with gold >= 25 routes
+    // fallbackMorningPlan to "shop" — exactly the branch #91 intercepts.
+    const a = e.state.adventurers[0];
+    a.hp = a.maxHp;
+    a.morale = 60;
+    a.gold = 120;
+    a.nightOwl = false; // keep this deterministic — a stray night run would degrade durability again after the repair
+    a.equipment = { weapon: makeItem("iron_sword") };
+    a.equipment.weapon!.durability = 1; // damaged, well under the 45%-of-replacement repair threshold
+
+    let repairedMsg = false;
+    runDays(e, 2, () => {
+      if (e.state.messages.some((m) => m.content.includes("repaired at the forge"))) repairedMsg = true;
+    });
+
+    expect(repairedMsg).toBe(true);
+    expect(a.equipment.weapon!.timesRepaired).toBe(1);
+    expect(a.equipment.weapon!.durability).toBe(a.equipment.weapon!.maxDurability);
+    const totalRepairRevenue =
+      e.state.ledgerHistory.reduce((n, l) => n + l.repairRevenue, 0) + e.state.ledger.repairRevenue;
+    expect(totalRepairRevenue).toBeGreaterThan(0);
+    expect(e.state.inventory.filter((it) => it.name === "Crude Hide")).toHaveLength(0); // the one material, consumed
+  });
+});
+
+describe("craft property save/load round-trip (#91)", () => {
+  it("round-trips staff, playerBuilt buildings (with builtDay), and helper.trackChosenDay", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
+    e.state.day = 10;
+    e.chooseTrack("craft");
+    e.state.gold = 1000;
+    e.buildStructure("garden");
+    e.state.reputation = 0.5;
+    e.hireStaff("shop");
+
+    saveGame(e.state);
+    const loaded = loadGame();
+    expect(loaded!.staff).toHaveLength(1);
+    expect(loaded!.staff[0].role).toBe("shop");
+    const garden = loaded!.buildings.find((b) => b.kind === "garden");
+    expect(garden?.playerBuilt).toBe(true);
+    expect(garden?.builtDay).toBe(10);
+    expect(loaded!.helper!.trackChosenDay).toBe(10);
+  });
+
+  it("defaults staff to [], ledger payroll/repair fields to 0, and helper.trackChosenDay to null on a pre-#91 save", () => {
+    const e = freshEngine();
+    e.createCharacters({ skin: 0, hair: 0 }, "Robin", { skin: 0, hair: 0 }, "curious");
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    delete raw.staff;
+    delete raw.ledger.payrollSpend;
+    delete raw.ledger.repairRevenue;
+    delete raw.helper.trackChosenDay;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+
+    const loaded = loadGame();
+    expect(loaded!.staff).toEqual([]);
+    expect(loaded!.ledger.payrollSpend).toBe(0);
+    expect(loaded!.ledger.repairRevenue).toBe(0);
+    expect(loaded!.helper!.trackChosenDay).toBeNull();
   });
 });

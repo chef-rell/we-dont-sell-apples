@@ -454,3 +454,66 @@ implicit:
    Balance-guardrail 7-day report (`scripts/balance-report.ts 7`) held: every
    band's adventurer gold and items-sold stayed within ±25% of pre-#90 main;
    no drop-rate tuning was needed.
+
+**2026-08-16 — Phase 4b: craft track, property buildings, production, hired
+staff** (issue #91, `game/Property.ts` — build gating, garden/lab
+production, forgeOrder, hired-staff gating/payroll; wires 4a's `Forge.ts`
+repair math into `AdventurerBehavior.ts`'s morning errand). Judgment calls
+the issue left implicit:
+
+1. **Forged-item rarity is always exactly "common", never rolled.** The
+   issue's "quality ceiling = uncommon rarity" doesn't say how a forged
+   item's rarity is actually chosen, and a player-triggered action (unlike
+   `generateAdventureScript`) has no seeded rng to roll one deterministically
+   without inventing an unseeded gameplay-affecting roll (forbidden by the
+   determinism discipline this PR is held to). Always-common trivially
+   satisfies "never exceeds uncommon." No new gear ITEM_DEFS were added —
+   `forgeOrder(defKey)` works over any existing weapon/armor def (iron_sword,
+   steel_sword, ...); the forge's distinctiveness is `origin: "forged"`
+   (4a's ×1.3 durability), not a separate item catalog.
+2. **"2 materials" (forge orders and repairs) means monster-drop loot,
+   explicitly excluding the garden's ingredients.** `herb_bundle`/
+   `moon_blossom` are `category: "loot"` (same category as the existing
+   monster-material drops, so they behave like stock for build-cost
+   matching) but are carved out of the forge's material pool by name
+   (`Property.isCraftMaterial`) so a forge order or a repair can't silently
+   eat the lab's ingredient stock.
+3. **Hired-staff hire-eligibility "unlock day" reference.** The spec says
+   the hire window opens "~10-15 days" after "the helper's own unlock" but
+   never defines what a track's "unlock day" IS as a persisted fact. Craft
+   roles (garden/lab/forge) use their building's new `TownBuilding.builtDay`
+   — the concrete, deterministic event a stage unlocking produces. The
+   "shop" role has no building to point to, so `Helper.trackChosenDay` (new
+   field, set by `chooseTrack()`) fills that role instead. Both feed the same
+   `day >= unlockDay + 12` OR `reputation >= 0.3` gate (`STAFF_HIRE_DELAY_DAYS
+   = 12`, the low end of the issue's "~10-15" range).
+4. **One hire per role.** `canHireStaff` rejects hiring a second staffer for
+   a role that already has one — the issue doesn't say whether multiple
+   hires per role are allowed, and this economy doesn't model a second garden
+   hand doing anything a first one doesn't already cover.
+5. **Craft production gates off the helper's daily `assignment`, not just
+   the permanent `track`** — same pattern issue #83 established (`assignment`
+   drives daily effects; `track` only gates the permanent commitment and its
+   trait bonus). A craft-track helper who's on shop duty today doesn't run
+   the garden that day; hired staff (independent of the helper's daily job)
+   are exactly the "escape hatch for the tracks you didn't pick" the spec
+   describes.
+6. **Repair-vs-rebuy reuses the existing `heading_to_shop`/`browsing` states**
+   rather than adding a new `AdventurerState` — `BehaviorContext.repairSlot`
+   (internal, not part of the contract) redirects the SAME morning-errand
+   trip to the forge's door instead of the shop's, and resolves the repair
+   transaction on arrival in place of `browsing`. Keeps `AdventurerState`
+   additive-free and the repair errand a strict "instead of," never an
+   "in addition to," the existing shop trip — satisfying the issue's own
+   "skip buying."
+   Balance: the no-craft path is structurally a no-op (no helper/buildings/
+   staff ever exist in the harness's STRATEGIES scenario, so
+   `runCraftProduction`, the payroll loop, and `planRepairErrand`'s
+   `forgeAvailable()` short-circuit all execute zero new logic) — confirmed
+   against `scripts/balance-report.ts 7` on origin/main vs this branch, with
+   deltas comparable to two same-code runs' own sampling noise (see the PR
+   body). The new craft scenario (forge built ~day 12, seeded materials/
+   helper-on-craft/hired staff, direct state setup per CLAUDE.md's
+   determinism discipline) shows non-zero `payrollSpend` and `repairRevenue`
+   in the ledger — the shape §6 was never meant to protect against, since
+   neither line touches a reaction/verdict.

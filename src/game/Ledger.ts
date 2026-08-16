@@ -19,6 +19,8 @@ export function freshLedger(day: number): DayLedger {
     restockSpend: 0,
     lootSpend: 0,
     donationsReceived: 0,
+    payrollSpend: 0,
+    repairRevenue: 0,
   };
 }
 
@@ -46,6 +48,19 @@ export function recordLootBuy(s: GameState, cost: number): void {
 
 export function recordDonation(s: GameState): void {
   s.ledger.donationsReceived += 1;
+}
+
+/** Hired-staff payroll (spec V2.9, issue #91): a cut of the day's revenue,
+ *  paid out at rollover — see GameEngine.onNewDay, which calls this against
+ *  the OUTGOING ledger before it rotates into history. */
+export function recordPayroll(s: GameState, amount: number): void {
+  s.ledger.payrollSpend += amount;
+}
+
+/** The forge's repair service (spec V2.9, issue #91): revenue collected
+ *  when an adventurer pays to have gear repaired instead of buying new. */
+export function recordRepairRevenue(s: GameState, amount: number): void {
+  s.ledger.repairRevenue += amount;
 }
 
 /** Roll the ledger at the day boundary. */
@@ -87,6 +102,12 @@ export function ledgerInsights(l: DayLedger): string[] {
   }
   if (l.donationsReceived > 0) {
     out.push("You're trading on charity right now — price above restock cost to climb out.");
+  }
+  if (l.payrollSpend > 0) {
+    out.push(`Hired staff took ${l.payrollSpend}g in payroll today.`);
+  }
+  if (l.repairRevenue > 0) {
+    out.push(`The forge brought in ${l.repairRevenue}g repairing gear instead of selling it new.`);
   }
   return out;
 }
