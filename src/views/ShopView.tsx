@@ -7,9 +7,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import type { GameEngine } from "../game/GameEngine";
+import { skyTint } from "../game/DayNightCycle";
 import { computeReaction } from "../game/Economy";
 import { drawCharacter } from "../rendering/CharacterRenderer";
 import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
+import { Particles } from "../rendering/Particles";
 import { rect } from "../rendering/PixelRenderer";
 import { drawReaction } from "../rendering/ReactionRenderer";
 import { PricingPanel } from "../ui/PricingPanel";
@@ -87,11 +89,21 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
 
     let raf = 0;
     let last = performance.now();
+    const particles = new Particles();
+    let soldSoFar = engine.state.stats.itemsSold;
     const frame = (now: number) => {
       const delta = Math.min(now - last, 100);
       last = now;
       engine.tick(delta);
-      renderShop(ctx, engine, selRef.current?.slot ?? null);
+
+      // A sale throws coins over the counter.
+      if (engine.state.stats.itemsSold > soldSoFar) {
+        soldSoFar = engine.state.stats.itemsSold;
+        particles.burst(WORLD_W / 2, WORLD_H - 170, { count: 10, speed: 110 });
+      }
+      particles.update(delta);
+
+      renderShop(ctx, engine, selRef.current?.slot ?? null, particles);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -316,6 +328,7 @@ export function renderShop(
   ctx: CanvasRenderingContext2D,
   engine: GameEngine,
   selectedSlot: number | null = null,
+  particles?: Particles,
 ) {
   const s = engine.state;
 
@@ -428,6 +441,37 @@ export function renderShop(
   ctx.font = `${3 * PX}px monospace`;
   ctx.fillStyle = PALETTE.textDim;
   ctx.fillText("Day " + s.day + " · " + s.phase, WORLD_W / 2, 74);
+  particles?.draw(ctx);
+
+  // ---- Lighting ----
+  // The shop feels the time of day like the town does, but softer — it's
+  // indoors — and the lamps over the counter push back after dark.
+  const tint = skyTint(s.timeOfDay);
+  if (tint.alpha > 0) {
+    ctx.globalAlpha = tint.alpha * 0.7;
+    rect(ctx, 0, 0, WORLD_W, WORLD_H, tint.color);
+    ctx.globalAlpha = 1;
+  }
+  if (s.phase === "night" || s.phase === "evening") {
+    const strength = s.phase === "night" ? 1 : 0.6;
+    // Lanterns hang either side of the sign, clear of the shelving.
+    for (const lampX of [140, WORLD_W - 140]) {
+      rect(ctx, lampX - PX, 40, PX * 2, 18, "#2c1f18"); // chain
+      rect(ctx, lampX - 12, 58, 24, 20, "#3a2c22"); // housing
+      rect(ctx, lampX - 8, 62, 16, 12, "#ffd98a"); // flame
+      // Light, stepped rather than blended to stay on-style.
+      for (const [halfW, alpha] of [
+        [28, 0.1],
+        [60, 0.06],
+        [96, 0.035],
+      ] as const) {
+        ctx.globalAlpha = alpha * strength;
+        rect(ctx, lampX - halfW, 78, halfW * 2, WORLD_H - 140, "#ffd98a");
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // One status line under the sign, most urgent first: someone waiting to sell
   // (their offer expires at nightfall), else who's in the shop, else the hint.
   // (It lives up here — the floor below the counter belongs to customers.)

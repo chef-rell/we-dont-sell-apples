@@ -10,6 +10,7 @@
 import { useEffect, useRef } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { chooseArea } from "../game/Combat";
+import { phaseFor } from "../game/DayNightCycle";
 import type { GameEngine } from "../game/GameEngine";
 import { drawCharacter } from "../rendering/CharacterRenderer";
 import { drawMonster, MONSTER_CELL } from "../rendering/MonsterRenderer";
@@ -104,7 +105,7 @@ export function renderWilderness(
 ) {
   const s = engine.state;
 
-  drawSky(ctx);
+  drawSky(ctx, s.timeOfDay);
   drawForestEdge(ctx);
   drawShadowCave(ctx);
 
@@ -135,9 +136,29 @@ export function renderWilderness(
 
 // ---------- terrain ----------
 
-function drawSky(ctx: CanvasRenderingContext2D) {
-  rect(ctx, 0, 0, WORLD_W, HORIZON, "#2a3a52"); // dusk-ish sky
-  rect(ctx, 0, HORIZON - 12, WORLD_W, 12, "#3a4a62");
+/** Sky colour tracks the clock — the wilderness is outdoors, and dusk out here
+ *  is the part of the day the player is usually watching. */
+function skyColors(timeOfDay: number): { sky: string; band: string; stars: boolean } {
+  const phase = phaseFor(timeOfDay);
+  switch (phase) {
+    case "dawn":
+      return { sky: "#4a3a58", band: "#8a5a52", stars: false };
+    case "morning":
+      return { sky: "#5a7a9a", band: "#7a9ab4", stars: false };
+    case "afternoon":
+      return { sky: "#6a8aa8", band: "#8aa8c0", stars: false };
+    case "evening":
+      return { sky: "#2a3a52", band: "#3a4a62", stars: true };
+    case "night":
+      return { sky: "#141b2e", band: "#1e2740", stars: true };
+  }
+}
+
+function drawSky(ctx: CanvasRenderingContext2D, timeOfDay: number) {
+  const { sky, band, stars } = skyColors(timeOfDay);
+  rect(ctx, 0, 0, WORLD_W, HORIZON, sky);
+  rect(ctx, 0, HORIZON - 12, WORLD_W, 12, band);
+  if (!stars) return;
   // A few stars on the cave side, so the two halves read differently
   for (let i = 0; i < 14; i++) {
     const x = MID_X + ((hash2d(i, 3, 7) * 1000) % (MID_X - 40));
@@ -263,6 +284,10 @@ function drawFight(
   // The monster they met, and how it went.
   const mx = x + 76;
   drawMonster(ctx, outcome.monsterName, mx, y - MONSTER_PX);
+  // Combat effects: slashes across a monster that went down, and a bruise of
+  // impact marks on the adventurer when they took a beating.
+  if (outcome.monsterDefeated) drawSlashes(ctx, mx, y - MONSTER_PX);
+  if (outcome.damageTaken >= 10) drawImpacts(ctx, x, y - CHAR_H);
   ctx.font = `${2.5 * PX}px monospace`;
   ctx.textAlign = "center";
   ctx.fillStyle = PALETTE.textDim;
@@ -289,6 +314,23 @@ function drawFight(
       rect(ctx, sx, sy, PX * 2, PX * 2, twinkle ? PALETTE.gold : "#f4dc9a");
     }
   }
+}
+
+/** Two diagonal cuts across a monster that lost the fight. */
+function drawSlashes(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  for (const offset of [0, 20]) {
+    for (let step = 0; step < 8; step++) {
+      rect(ctx, x + 6 + offset + step * PX, y + 8 + step * PX, PX, PX, "#f0e6d3");
+    }
+  }
+}
+
+/** Impact marks — they took a real hit out there. Static: a wound that blinks
+ *  reads as a rendering glitch, not an injury. */
+function drawImpacts(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  rect(ctx, x - 12, y + 20, PX * 2, PX * 2, "#c0392b");
+  rect(ctx, x + 8, y + 36, PX, PX, "#c0392b");
+  rect(ctx, x - 4, y + 44, PX, PX, "#8f2a20");
 }
 
 function drawHpBar(ctx: CanvasRenderingContext2D, x: number, y: number, ratio: number) {
