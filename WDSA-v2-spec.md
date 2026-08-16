@@ -291,6 +291,16 @@ plus #65, a test-determinism fix). Build notes for later phases:
    movement), and the equipped weapon renders as one uniform blade regardless
    of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
 
+**2026-08-16 — Phase 4 complete, tagged `v2.4-economy`** (issues #90 rarity/
+enchant/repair engine, #91 craft track + property + staff, #92 visuals —
+PRs #93, #96, #97, plus the plot-layout fix). Balance guardrails held at
+every band. Notable calls (details in the per-PR entries): forged items
+roll common rarity deterministically — lifting high-level smiths to
+deterministic uncommon output is queued for playtest tuning; no fire-staff
+engine method yet (StaffPanel's button is disabled); garden/lab clicks
+open StaffPanel pending dedicated panels; craft-plot geometry is code-owned
+(loadGame re-anchors playerBuilt footprints to CRAFT_PLOTS).
+
 **2026-08-16 — Phase 3 complete, tagged `v2.3-helper`** (issues #83 helper
 engine, #84 creation + UI + child sprite — PRs #85, #88; plus #86/#87 test
 determinism fixes, one of which briefly shipped a build-red commit to main —
