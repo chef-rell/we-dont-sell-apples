@@ -13,7 +13,7 @@ Read `README.md` first for architecture. `WDSA-game-spec.md` is the design sourc
 ## Commands
 
 - `npm run build` — tsc + vite; MUST pass before any push
-- `npm test` — vitest, currently 109 tests; MUST pass before any push
+- `npm test` — vitest, currently 143 tests; MUST pass before any push
 - `npm run lint` — oxlint (3 known fast-refresh warnings in view files are accepted debt)
 - `npx tsx scripts/balance-report.ts [days]` — headless economy comparison across markup strategies; run before/after balance changes
 
