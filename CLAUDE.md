@@ -2,6 +2,14 @@
 
 Read `README.md` first for architecture; `WDSA-game-spec.md` is the design source of truth (§22 = deviations log — update it when you change a design decision).
 
+## Session start checklist (both devs — do this FIRST)
+
+1. `git pull origin main` — always start on the latest code. Stale bases cause silent reverts (PR #13 incident).
+2. `npm run build && npm test` — confirm main is green before starting new work.
+3. `gh issue list --assignee <your-github-username> --state open` — check for assigned issues and prioritise them.
+4. Start the issue monitor or scheduled agent (see "Issue monitoring" section below).
+5. Dev A: also run `gh pr list --search "head:dev-b"` to check for PRs needing review.
+
 ## Commands
 
 - `npm run build` — tsc + vite; MUST pass before any push
