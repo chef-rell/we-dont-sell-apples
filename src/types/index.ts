@@ -256,6 +256,33 @@ export type AIMode = "full" | "light" | "off";
 
 export type GameView = "town" | "shop" | "wilderness" | "gameover";
 
+// ---------- Town buildings (spec V2.8; issue #56) ----------
+
+/** Known kinds today; the union stays open (via the `string &` widening
+ *  below) so v2 buildings (clinic, graveyard, competitor_store, garden,
+ *  alchemy_lab, forge, ...) don't need a contract change to add. */
+export type BuildingKind =
+  | "shop"
+  | "tavern"
+  | "house"
+  | "gate"
+  | "square"
+  | (string & {});
+
+/** One piece of town geometry — fixed infrastructure today, player-built
+ *  plots later (spec V2.8). Replaces the frozen `TOWN` literal that used to
+ *  live in AdventurerBehavior.ts and the two hand-coded click bboxes that
+ *  used to live in TownView.tsx. Units match what those used: world px. */
+export interface TownBuilding {
+  id: string;
+  kind: BuildingKind;
+  footprint: { x: number; y: number; w: number; h: number };
+  /** Interaction/anchor point (a walk-to target), when the building has one
+   *  distinct from its footprint origin — e.g. the shop's actual doorway. */
+  door?: { x: number; y: number };
+  clickable: boolean;
+}
+
 // ---------- Root state ----------
 
 export interface GameState {
@@ -284,6 +311,7 @@ export interface GameState {
   autoPilotEnabled: boolean; // player toggle (§13); offline sim uses it regardless
   offlineSummary: OfflineSummary | null; // set on load after an away period; UI clears it
   reputation: number; // -1..1, shop's town-wide reputation (spec V2.9); recomputed and persisted each rollover
+  buildings: TownBuilding[]; // town geometry registry (spec V2.8, issue #56); see defaultBuildings()
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

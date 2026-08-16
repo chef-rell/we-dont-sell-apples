@@ -5,6 +5,7 @@
 
 import type { GameState } from "../types";
 import { freshLedger } from "./Ledger";
+import { defaultBuildings } from "../utils/TownBuildings";
 
 const SAVE_KEY = "wdsa_save_v1";
 
@@ -27,6 +28,7 @@ export function loadGame(): GameState | null {
     // Forward-compat: fields added after a save was written get defaults.
     state.saveVersion ??= 1;
     state.reputation ??= 0;
+    state.buildings ??= defaultBuildings(); // registry added in #56; old saves get today's fixed geometry
     state.lootOffers ??= [];
     state.recentOutcomes ??= [];
     state.merchant ??= null;

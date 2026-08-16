@@ -19,7 +19,6 @@ import {
 } from "./TownChat";
 import { makeDecision, type MorningPlanDecision } from "../entities/AdventurerAI";
 import {
-  TOWN,
   freshContext,
   stepAdventurer,
   applyPlanOverride,
@@ -36,8 +35,33 @@ import {
   STARTING_ADVENTURER_COUNT,
   STARTING_GOLD,
 } from "../utils/constants";
+import { defaultBuildings, getBuilding } from "../utils/TownBuildings";
 
-export { TOWN }; // single source of truth for town landmarks lives in AdventurerBehavior
+// Town geometry now lives on GameState.buildings (spec V2.8, issue #56).
+// This module-level registry backs the two spots below that need landmark
+// coordinates before any GameState exists yet (initial/replacement spawns).
+const REGISTRY = defaultBuildings();
+const shopB = getBuilding(REGISTRY, "shop")!;
+const tavernB = getBuilding(REGISTRY, "tavern")!;
+const gateB = getBuilding(REGISTRY, "gate")!;
+const squareB = getBuilding(REGISTRY, "square")!;
+const houseBs = REGISTRY.filter((b) => b.kind === "house");
+
+// Legacy shape kept ONLY for TownView.tsx's rendering, which is out of
+// scope for #56 (a parallel PR is mid-flight on character rendering
+// there). Everything below reads straight off the registry except `shop`:
+// the shop's registry footprint deliberately carries click-test slack
+// (see TownBuildings.ts), not its true wall position, so that one point is
+// kept as the original literal instead of being derived.
+export const TOWN = {
+  shop: { x: 120, y: 140 },
+  shopDoor: shopB.door!,
+  tavern: { x: tavernB.footprint.x, y: tavernB.footprint.y },
+  tavernDoor: tavernB.door!,
+  houses: houseBs.map((b) => ({ x: b.footprint.x, y: b.footprint.y })),
+  gate: gateB.door!,
+  square: { x: squareB.footprint.x, y: squareB.footprint.y },
+} as const;
 
 const MAX_MESSAGES = 100;
 
@@ -530,6 +554,7 @@ function createInitialState(): GameState {
     autoPilotEnabled: false,
     offlineSummary: null,
     reputation: 0,
+    buildings: defaultBuildings(),
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
@@ -561,15 +586,15 @@ const STARTING_CAST: Array<{
 /** A newcomer drawn from the cast templates with fresh identity and no history. */
 function createReplacementAdventurer(taken: string[]): Adventurer {
   const c = STARTING_CAST[Math.floor(Math.random() * STARTING_CAST.length)];
-  const [a] = buildAdventurers([c], TOWN.gate.x - 40, TOWN.gate.y + 30, taken);
+  const [a] = buildAdventurers([c], gateB.door!.x - 40, gateB.door!.y + 30, taken);
   return a;
 }
 
 function createStartingAdventurers(): Adventurer[] {
   return buildAdventurers(
     STARTING_CAST.slice(0, STARTING_ADVENTURER_COUNT),
-    TOWN.square.x - 100,
-    TOWN.square.y - 20,
+    squareB.footprint.x - 100,
+    squareB.footprint.y - 20,
     [],
   );
 }
