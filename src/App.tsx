@@ -3,6 +3,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { GameEngine } from "./game/GameEngine";
+import { clearSave } from "./game/GameStatePersistence";
+import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
 import { WildernessView } from "./views/WildernessView";
@@ -13,6 +15,8 @@ const SPEEDS: GameSpeed[] = [1, 1.5, 2];
 export default function App() {
   const engineRef = useRef<GameEngine | null>(null);
   if (!engineRef.current) engineRef.current = new GameEngine();
+  // Bumped on restart to swap in a fresh engine and remount the views with it.
+  const [run, setRun] = useState(0);
   const engine = engineRef.current;
 
   // HUD state mirrors the engine at a low refresh rate (canvas runs its own rAF)
@@ -26,6 +30,15 @@ export default function App() {
     }, 250);
     return () => clearInterval(id);
   }, [engine]);
+
+  // Start over after a game over: drop the save so the new engine can't resume
+  // the run that just ended (§5, §12).
+  const restart = () => {
+    clearSave();
+    engineRef.current = new GameEngine(false);
+    setView(engineRef.current.state.view);
+    setRun((n) => n + 1);
+  };
 
   const setSpeed = (speed: GameSpeed) => {
     engine.state.speed = speed;
@@ -64,8 +77,10 @@ export default function App() {
           ))}
         </div>
       </header>
-      <main>
-        {view === "shop" ?
+      <main key={run}>
+        {view === "gameover" ?
+          <GameOverView engine={engine} onRestart={restart} />
+        : view === "shop" ?
           <ShopView engine={engine} onLeave={() => go("town")} />
         : view === "wilderness" ?
           <WildernessView engine={engine} onLeave={() => go("town")} />
