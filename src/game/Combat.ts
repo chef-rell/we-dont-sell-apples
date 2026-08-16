@@ -25,13 +25,19 @@ export function chooseArea(a: Adventurer, day: number): WildernessArea {
  * Resolve one adventure. Randomness is real but bounded — gear and level
  * dominate, dice decide the margins (spec §7: "some randomness").
  */
-export function resolveAdventure(a: Adventurer, day: number): AdventureOutcome {
+export function resolveAdventure(
+  a: Adventurer,
+  day: number,
+  opts: { night?: boolean } = {},
+): AdventureOutcome {
   const area = chooseArea(a, day);
   const seed = a.appearance.skin * 17 + a.appearance.hair * 31 + day * 7;
   const monster: MonsterDef = encounterFor(area, seed);
 
   const power = combatPower(a);
-  const threat = monster.hp / 4 + monster.damage;
+  // Night monsters are tougher (§13): higher threat, higher death risk —
+  // balanced by richer loot and gold below.
+  const threat = (monster.hp / 4 + monster.damage) * (opts.night ? 1.5 : 1);
 
   // Win chance: power vs threat, clamped to [0.15, 0.95] so nothing is a
   // guaranteed win or a hopeless massacre.
@@ -47,11 +53,12 @@ export function resolveAdventure(a: Adventurer, day: number): AdventureOutcome {
   // Death (spec §7): only possible on a loss, when damage would exceed HP.
   const survived = won || damageTaken < a.hp;
 
-  // Loot: winners roll the table; 60% one drop, 40% two.
+  // Loot: winners roll the table; 60% one drop, 40% two. Night runs always
+  // get the second roll — the whole point of going out in the dark.
   const lootItemKeys: string[] = [];
   if (won) {
     lootItemKeys.push(monster.lootTable[seed % monster.lootTable.length]);
-    if (Math.random() < 0.4 && monster.lootTable.length > 1) {
+    if ((opts.night || Math.random() < 0.4) && monster.lootTable.length > 1) {
       lootItemKeys.push(monster.lootTable[(seed + 1) % monster.lootTable.length]);
     }
   }
@@ -59,7 +66,9 @@ export function resolveAdventure(a: Adventurer, day: number): AdventureOutcome {
   // Gold: the wilderness is the economy's faucet. Without it the town's
   // money supply is fixed and sales stall once adventurers go broke
   // (found via scripts/balance-report.ts). Scales with monster toughness.
-  const goldFound = won ? Math.round(monster.hp * (0.5 + Math.random() * 0.5)) : 0;
+  const goldFound = won
+    ? Math.round(monster.hp * (0.5 + Math.random() * 0.5) * (opts.night ? 1.6 : 1))
+    : 0;
 
   return {
     adventurerId: a.id,

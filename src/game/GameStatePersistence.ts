@@ -28,7 +28,10 @@ export function loadGame(): GameState | null {
     state.recentOutcomes ??= [];
     state.merchant ??= null;
     state.pricingHistory ??= [];
-    for (const a of state.adventurers) a.browsingItemId ??= null;
+    for (const a of state.adventurers) {
+      a.browsingItemId ??= null;
+      a.memory.lowMoraleDays ??= 0;
+    }
     for (const o of state.recentOutcomes) o.goldFound ??= 0;
     state.autoPilotEnabled ??= false;
     state.offlineSummary ??= null;

@@ -41,6 +41,10 @@ export interface BehaviorContext {
   adventured: boolean;
   /** Last day beginDay ran — guards the once-per-day plan (0 = never). */
   planDay: number;
+  /** Day of the last night run (guards one-per-night) and whether the
+   *  current adventure is a night run. */
+  nightRunDay: number;
+  onNightRun: boolean;
   /** Loot keys still to offer the player after returning. */
   lootToSell: string[]; // item ids in a.inventory
   /** The offer currently on the table, if any. */
@@ -56,6 +60,8 @@ export function freshContext(): BehaviorContext {
     shopped: false,
     adventured: false,
     planDay: 0,
+    nightRunDay: 0,
+    onNightRun: false,
     lootToSell: [],
     pendingOfferId: null,
   };
@@ -83,6 +89,24 @@ export function stepAdventurer(
 
   switch (a.state) {
     case "resting": {
+      // Night owls (§13): high-risk types may slip out after dark for rarer
+      // loot. Rare — roughly one night in five when eligible.
+      if (
+        s.phase === "night" &&
+        a.nightOwl &&
+        a.morale >= 50 &&
+        a.hp > a.maxHp * 0.6 &&
+        bc.nightRunDay !== s.day &&
+        Math.random() < 0.005 * dt // ~20% chance across a whole night phase
+      ) {
+        bc.nightRunDay = s.day;
+        bc.onNightRun = true;
+        a.state = "adventuring";
+        a.position.x = TOWN.gate.x;
+        a.position.y = TOWN.gate.y + 30;
+        out.messages.push(systemMsg(s, `${a.name} slipped out of the gate into the dark...`));
+        break;
+      }
       // Wake at dawn: plan the day (deterministic immediately; AI may override).
       if ((s.phase === "dawn" || s.phase === "morning") && bc.planDay !== s.day) {
         beginDay(a, bc, s.day);
@@ -189,10 +213,14 @@ export function stepAdventurer(
     }
 
     case "adventuring": {
-      // Resolve at evening: deterministic outcome roll (§8), then home —
-      // or not. The engine attaches AI narration to the outcome async.
-      if (s.phase === "evening" || s.phase === "night") {
-        const outcome = resolveAdventure(a, s.day);
+      // Resolve at evening — or at dawn for night runs. Deterministic
+      // outcome roll (§8); the engine attaches AI narration async.
+      const resolveNow = bc.onNightRun
+        ? s.phase === "dawn" || s.phase === "morning"
+        : s.phase === "evening" || s.phase === "night";
+      if (resolveNow) {
+        const outcome = resolveAdventure(a, s.day, { night: bc.onNightRun });
+        bc.onNightRun = false;
         out.outcome = outcome;
         a.hp = Math.max(0, a.hp - outcome.damageTaken);
 
@@ -409,6 +437,7 @@ function recordReaction(a: Adventurer, item: Item, out: StepResult, s: GameState
   const r = computeReaction(a, item);
   if (r === "angry") {
     a.relationships.shopkeeper = Math.max(-100, a.relationships.shopkeeper - 2);
+    a.morale = Math.max(0, a.morale - 2); // being priced out is demoralizing (§14)
     out.messages.push(systemMsg(s, `${a.name} scoffed at the price of ${item.name} and walked out.`));
   }
 }

@@ -99,7 +99,12 @@ describe("runOfflineSim", () => {
     for (const it of e.state.shelves) if (it) e.setPrice(it.id, Math.round(it.baseValue * 1.2));
     const summary = runOfflineSim(e, 4);
     if (summary.itemsSold > 3) {
-      expect(summary.goldEnd).toBeGreaterThan(summary.goldStart * 0.5);
+      // Gold alone is not the scoreboard — the auto-pilot converts cash into
+      // shelf stock. Net worth (gold + stock at base) must stay healthy.
+      const stockValue =
+        e.state.shelves.reduce((n, it) => n + (it?.baseValue ?? 0), 0) +
+        e.state.inventory.reduce((n, it) => n + it.baseValue, 0);
+      expect(summary.goldEnd + stockValue).toBeGreaterThan(summary.goldStart * 0.8);
     }
   });
 
