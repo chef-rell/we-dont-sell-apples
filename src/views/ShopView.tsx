@@ -13,6 +13,7 @@ import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
 import { rect } from "../rendering/PixelRenderer";
 import { drawReaction } from "../rendering/ReactionRenderer";
 import { PricingPanel } from "../ui/PricingPanel";
+import { WholesalePanel } from "../ui/WholesalePanel";
 import type { Adventurer, GameState, Item } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 
@@ -41,6 +42,18 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
   const [sel, setSel] = useState<{ slot: number; item: Item } | null>(null);
   const selRef = useRef(sel);
   selRef.current = sel;
+  // Wholesale cart: present only during the afternoon, so poll for it and shut
+  // the panel when the cart packs up.
+  const [shopping, setShopping] = useState(false);
+  const [cartHere, setCartHere] = useState(engine.state.merchant !== null);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const here = engine.state.merchant !== null;
+      setCartHere(here);
+      if (!here) setShopping(false);
+    }, 250);
+    return () => clearInterval(id);
+  }, [engine]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -113,6 +126,31 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
           <PricingPanel item={sel.item} onSetPrice={setPrice} onClose={() => setSel(null)} />
         </div>
       )}
+      {cartHere && (
+        <button
+          onClick={() => setShopping((open) => !open)}
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            background: PALETTE.uiDark,
+            border: `2px solid ${PALETTE.gold}`,
+            color: PALETTE.gold,
+            fontFamily: "monospace",
+            fontSize: 15,
+            padding: "6px 12px",
+            cursor: "pointer",
+            zIndex: 2,
+          }}
+        >
+          🛒 Restock
+        </button>
+      )}
+      {shopping && (
+        <div style={cartAnchor}>
+          <WholesalePanel engine={engine} onClose={() => setShopping(false)} />
+        </div>
+      )}
       <button
         onClick={onLeave}
         style={{
@@ -158,6 +196,14 @@ function panelAnchor(slot: number): CSSProperties {
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
+
+/** The restock panel hangs under its button in the top-right corner. */
+const cartAnchor: CSSProperties = {
+  position: "absolute",
+  top: 52,
+  right: 12,
+  zIndex: 2,
+};
 
 /**
  * Give each customer a standing spot, preferring the lane in front of the
