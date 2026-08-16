@@ -35,6 +35,10 @@ On session start and periodically: `gh pr list --search "head:dev-b"`. For each 
 - **Sound:** Tone.js is dynamically imported (own chunk); audio must stay optional and gesture-gated.
 - **Testing multi-day behavior in the browser:** background tabs suspend rAF; use the dev-only `window.engine` handle.
 
+## Agent workflow
+
+Use agents freely — announce what you're spinning up before launching. For coding tasks, use Opus as the orchestrator (planning, design, review) and delegate implementation to Sonnet agents (`model: "sonnet"`) to save tokens. Only use Opus-tier agents when the subtask needs deep reasoning.
+
 ## Deployment
 
 Railway auto-deploys `main` (project `we-dont-sell-apples`, service `web`, Node 22 pinned via `.nvmrc`/engines). Verify after merge: `railway status`, then curl the URL in README. Build failures so far have only ever been Node-version drift.
