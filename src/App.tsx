@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
+import { NightSummary } from "./ui/NightSummary";
 import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
@@ -77,7 +78,8 @@ export default function App() {
           ))}
         </div>
       </header>
-      <main key={run}>
+      <main key={run} style={{ position: "relative" }}>
+        <NightSummary engine={engine} />
         {view === "gameover" ?
           <GameOverView engine={engine} onRestart={restart} />
         : view === "shop" ?
