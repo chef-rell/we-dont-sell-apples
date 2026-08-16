@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { GameEngine } from "./game/GameEngine";
 import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
+import { WildernessView } from "./views/WildernessView";
 import type { GameSpeed, GameView } from "./types";
 
 const SPEEDS: GameSpeed[] = [1, 1.5, 2];
@@ -64,11 +65,16 @@ export default function App() {
         </div>
       </header>
       <main>
-        {view === "shop" ? (
+        {view === "shop" ?
           <ShopView engine={engine} onLeave={() => go("town")} />
-        ) : (
-          <TownView engine={engine} onEnterShop={() => go("shop")} />
-        )}
+        : view === "wilderness" ?
+          <WildernessView engine={engine} onLeave={() => go("town")} />
+        : <TownView
+            engine={engine}
+            onEnterShop={() => go("shop")}
+            onEnterWilderness={() => go("wilderness")}
+          />
+        }
       </main>
     </div>
   );

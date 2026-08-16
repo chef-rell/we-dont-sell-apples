@@ -22,10 +22,19 @@ const IN_TOWN: AdventurerState[] = [
   "returning",
 ];
 
-export function TownView({ engine, onEnterShop }: { engine: GameEngine; onEnterShop: () => void }) {
+export function TownView({
+  engine,
+  onEnterShop,
+  onEnterWilderness,
+}: {
+  engine: GameEngine;
+  onEnterShop: () => void;
+  onEnterWilderness: () => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Clicking the shop building enters the Shop View. Map the click from CSS
+  // Clicking the shop building enters the Shop View; clicking the east gate
+  // follows the adventurers out to the Wilderness View. Map the click from CSS
   // pixels back into world coordinates (the canvas is scaled to fit the window).
   const handleClick = (e: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -36,6 +45,11 @@ export function TownView({ engine, onEnterShop }: { engine: GameEngine; onEnterS
     // Shop footprint (walls + roof), with a little slack for easy clicking.
     if (wx >= TOWN.shop.x - 20 && wx <= TOWN.shop.x + 96 && wy >= TOWN.shop.y - 24 && wy <= TOWN.shop.y + 64) {
       onEnterShop();
+      return;
+    }
+    // Gate pillars plus the road between them.
+    if (wx >= TOWN.gate.x - 24 && wy >= TOWN.gate.y - 40 && wy <= TOWN.gate.y + 140) {
+      onEnterWilderness();
     }
   };
 
@@ -113,9 +127,15 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
     drawBuilding(ctx, { x: h.x, y: h.y, w: 10, h: 8, night });
   }
 
-  // Gate: two stone pillars at the east edge
+  // Gate: two stone pillars at the east edge — clickable, it leads out to the
+  // Wilderness View, so it gets a label like the buildings do.
   px(ctx, TOWN.gate.x / PX, TOWN.gate.y / PX - 6, 3, 14, PALETTE.stone[0]);
   px(ctx, TOWN.gate.x / PX, TOWN.gate.y / PX + 16, 3, 14, PALETTE.stone[1]);
+  ctx.font = `${3 * PX}px monospace`;
+  ctx.textAlign = "center";
+  ctx.fillStyle = PALETTE.textLight;
+  ctx.fillText("GATE", TOWN.gate.x + 6, TOWN.gate.y - 34);
+  ctx.textAlign = "left";
 
   // Adventurers who are actually outdoors in town (issue #15): shoppers are
   // inside the shop and get drawn by ShopView, and adventurers are away in the
