@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { GameEngine } from "../game/GameEngine";
-import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
+import { drawItemWithRarity, ICON_CELL, rarityNameColor } from "../rendering/ItemRenderer";
 import type { LootOffer } from "../types";
 import { PALETTE, PX } from "../utils/constants";
 
@@ -95,7 +95,9 @@ function OfferRow({
     <div style={rowStyle}>
       <ItemIcon offer={offer} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ color: PALETTE.textLight, fontSize: 13 }}>{offer.item.name}</div>
+        <div style={{ color: rarityNameColor(offer.item, PALETTE.textLight), fontSize: 13 }}>
+          {offer.item.name}
+        </div>
         <div style={{ color: PALETTE.textDim, fontSize: 11 }}>
           {offer.adventurerName} asks {offer.askPrice}g
         </div>
@@ -128,7 +130,7 @@ function ItemIcon({ offer }: { offer: LootOffer }) {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, ICON_PX, ICON_PX);
-    drawItemIcon(ctx, offer.item, 0, 0);
+    drawItemWithRarity(ctx, offer.item, 0, 0);
   }, [offer]);
   return <canvas ref={ref} width={ICON_PX} height={ICON_PX} style={{ imageRendering: "pixelated" }} />;
 }

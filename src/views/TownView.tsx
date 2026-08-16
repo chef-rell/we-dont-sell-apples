@@ -9,14 +9,18 @@
 // screen -> world for clicks. `GameState.buildings` is read directly — the
 // legacy TOWN shim in GameEngine.ts is gone (spec V2.15 note 2).
 
-import { useEffect, useRef, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import type { GameEngine } from "../game/GameEngine";
 import { skyTint } from "../game/DayNightCycle";
+import { ITEM_DEFS } from "../entities/Item";
 import { CHILD_SPRITE_H, drawCharacter } from "../rendering/CharacterRenderer";
 import { depthKey, drawIsoBlock, isoFacing, project, shade, unproject } from "../rendering/iso";
 import { hash2d, rect } from "../rendering/PixelRenderer";
 import { Particles } from "../rendering/Particles";
-import type { AdventurerState, TownBuilding } from "../types";
+import { BuildChip, BuildPanel } from "../ui/BuildPanel";
+import { ForgePanel } from "../ui/ForgePanel";
+import { StaffPanel } from "../ui/StaffPanel";
+import type { AdventurerState, Item, TownBuilding } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 import { getBuilding, worldPointToBuilding } from "../utils/TownBuildings";
 
@@ -39,6 +43,10 @@ export function TownView({
   onEnterShop: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Which craft/build panel (if any) is open, mirroring ShopView's `corner`
+  // pattern — the chip and building clicks both funnel through this one
+  // piece of state so only one panel is ever open at a time.
+  const [openPanel, setOpenPanel] = useState<"build" | "forge" | "staff" | null>(null);
 
   // Clicking the shop building enters the Shop View. The east gate used to
   // route to the Wilderness View; that screen is retired as of issue #78 —
@@ -62,6 +70,15 @@ export function TownView({
     const hit = worldPointToBuilding(engine.state.buildings, wx, wy);
     if (hit?.id === "shop") {
       onEnterShop();
+    } else if (hit?.kind === "forge") {
+      setOpenPanel("forge");
+    } else if (hit?.kind === "garden" || hit?.kind === "alchemy_lab") {
+      // Judgment call (per issue #92's package spec): no dedicated
+      // garden/lab panel exists — only BuildPanel/ForgePanel/StaffPanel do.
+      // StaffPanel is the closest "right panel" for managing who works
+      // these two buildings, so both route there until/unless a future
+      // phase gives them bespoke panels.
+      setOpenPanel("staff");
     }
   };
 
@@ -83,20 +100,38 @@ export function TownView({
   }, [engine]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={WORLD_W}
-      height={WORLD_H}
-      onClick={handleClick}
-      style={{
-        width: "100%",
-        maxWidth: WORLD_W,
-        imageRendering: "pixelated",
-        display: "block",
-        margin: "0 auto",
-        cursor: "pointer",
-      }}
-    />
+    <div style={{ position: "relative", width: "100%", maxWidth: WORLD_W, margin: "0 auto" }}>
+      <canvas
+        ref={canvasRef}
+        width={WORLD_W}
+        height={WORLD_H}
+        onClick={handleClick}
+        style={{
+          width: "100%",
+          maxWidth: WORLD_W,
+          imageRendering: "pixelated",
+          display: "block",
+          margin: "0 auto",
+          cursor: "pointer",
+        }}
+      />
+      <div style={{ position: "absolute", top: 12, right: 12 }}>
+        <BuildChip engine={engine} onOpen={() => setOpenPanel("build")} />
+      </div>
+      {openPanel && (
+        <div style={{ position: "absolute", top: 52, right: 12 }}>
+          {openPanel === "build" && (
+            <BuildPanel
+              engine={engine}
+              onClose={() => setOpenPanel(null)}
+              onOpenStaff={() => setOpenPanel("staff")}
+            />
+          )}
+          {openPanel === "forge" && <ForgePanel engine={engine} onClose={() => setOpenPanel(null)} />}
+          {openPanel === "staff" && <StaffPanel engine={engine} onClose={() => setOpenPanel(null)} />}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -266,19 +301,173 @@ function drawTree(ctx: CanvasRenderingContext2D, tx: number, ty: number): void {
   drawIsoBlock(ctx, tx - canopy / 2, ty - canopy / 2, canopy, canopy, 22, PALETTE.foliage, 16);
 }
 
-function drawGroundTile(ctx: CanvasRenderingContext2D, wx: number, wy: number, size: number, color: string): void {
+/** Flat projected diamond, optionally lifted `liftPx` above the ground
+ *  plane (for a decoration drawn on top of an already-shaded face, per spec
+ *  V2.4's "no unshaded flat rect ever appears in the world view" rule —
+ *  ground tiles themselves are the one ground-plane exception; everything
+ *  else layering a flat fill does so on top of a shaded box, same as
+ *  drawBuildingBlock's door/window marks). */
+function fillIsoQuad(
+  ctx: CanvasRenderingContext2D,
+  wx: number,
+  wy: number,
+  wDepth: number,
+  hDepth: number,
+  color: string,
+  liftPx = 0,
+): void {
   const pN = project(wx, wy);
-  const pE = project(wx + size, wy);
-  const pS = project(wx + size, wy + size);
-  const pW = project(wx, wy + size);
+  const pE = project(wx + wDepth, wy);
+  const pS = project(wx + wDepth, wy + hDepth);
+  const pW = project(wx, wy + hDepth);
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.moveTo(pN.sx, pN.sy);
-  ctx.lineTo(pE.sx, pE.sy);
-  ctx.lineTo(pS.sx, pS.sy);
-  ctx.lineTo(pW.sx, pW.sy);
+  ctx.moveTo(pN.sx, pN.sy - liftPx);
+  ctx.lineTo(pE.sx, pE.sy - liftPx);
+  ctx.lineTo(pS.sx, pS.sy - liftPx);
+  ctx.lineTo(pW.sx, pW.sy - liftPx);
   ctx.closePath();
   ctx.fill();
+}
+
+function drawGroundTile(ctx: CanvasRenderingContext2D, wx: number, wy: number, size: number, color: string): void {
+  fillIsoQuad(ctx, wx, wy, size, size, color);
+}
+
+// ---------- Craft buildings (spec V2.9/V2.4, issue #92) ----------
+//
+// Garden/alchemy_lab/forge get their own bespoke look rather than the
+// generic `drawBuildingBlock` house-shape — `buildingVisual()` still
+// returns null for these three kinds (see its switch above), and these
+// draw functions are called directly from the same building loop in
+// `render()`, pushed into the same depth-sorted `drawables` array. All
+// three use `b.footprint` verbatim — unlike the shop, these buildings'
+// footprint IS their real plot/wall box (see CRAFT_PLOTS in Property.ts),
+// no door-offset math needed.
+
+const GARDEN_INGREDIENT_NAMES: readonly string[] = [ITEM_DEFS.herb_bundle.name, ITEM_DEFS.moon_blossom.name];
+const GARDEN_CROP_CAP = 8;
+const GARDEN_ROWS = 4;
+const GARDEN_LIFT = 3; // subtle raised-bed height, not a wall
+
+/** Ingredients currently in the stockroom (herb_bundle + moon_blossom),
+ *  clamped to the crop-fill cap — a read-only state observation, no engine
+ *  changes. */
+function gardenCropCount(inventory: Item[]): number {
+  const count = inventory.filter((it) => GARDEN_INGREDIENT_NAMES.includes(it.name)).length;
+  return Math.min(GARDEN_CROP_CAP, count);
+}
+
+/** Tilled diamond plot with furrow-row stripes and crop marks that fill in
+ *  as garden ingredients accrue (spec: "crop rows that fill in as
+ *  ingredients accrue"). A very-low `drawIsoBlock` gives it a subtle
+ *  raised-bed silhouette distinct from the plain dirt path tiles already in
+ *  the scene, rather than a flat fill. */
+function drawGardenPlot(ctx: CanvasRenderingContext2D, footprint: Rect, inventory: Item[]): void {
+  const { x, y, w, h } = footprint;
+  drawIsoBlock(ctx, x, y, w, h, GARDEN_LIFT, PALETTE.dirt[0]);
+
+  const rowH = h / GARDEN_ROWS;
+  for (let r = 0; r < GARDEN_ROWS; r++) {
+    const tone = r % 2 === 0 ? PALETTE.dirt[1] : shade(PALETTE.dirt[0], -0.15);
+    fillIsoQuad(ctx, x, y + r * rowH, w, rowH - 1, tone, GARDEN_LIFT);
+  }
+
+  const cols = 4;
+  const totalSlots = GARDEN_ROWS * cols;
+  const filled = Math.round((gardenCropCount(inventory) / GARDEN_CROP_CAP) * totalSlots);
+  let slot = 0;
+  for (let r = 0; r < GARDEN_ROWS; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (slot < filled) {
+        const cx = x + (c + 0.5) * (w / cols);
+        const cy = y + (r + 0.5) * rowH;
+        const p = project(cx, cy);
+        const cropSize = 5;
+        ctx.fillStyle = PALETTE.foliage;
+        ctx.fillRect(p.sx - cropSize / 2, p.sy - GARDEN_LIFT - cropSize, cropSize, cropSize);
+      }
+      slot++;
+    }
+  }
+}
+
+const LAB_WALL_H = 40;
+const LAB_ROOF_H = 10;
+
+/** Small block, purple accent + bottle sign (spec). `PALETTE.uiBorder`
+ *  (#5c4a7a) is already purple-ish and reused verbatim here rather than
+ *  adding a new PALETTE token — it reads fine at this scale. */
+function drawAlchemyLab(ctx: CanvasRenderingContext2D, b: TownBuilding): void {
+  const { x, y, w, h } = b.footprint;
+  const wallColor = PALETTE.uiBorder;
+  drawIsoBlock(ctx, x, y, w, h, LAB_WALL_H, wallColor);
+
+  // Flat roof cap, stacked on the walls — same liftPx-stacking idiom as
+  // drawBuildingBlock's roof.
+  const overhang = 4;
+  drawIsoBlock(
+    ctx,
+    x - overhang,
+    y - overhang,
+    w + overhang * 2,
+    h + overhang * 2,
+    LAB_ROOF_H,
+    shade(wallColor, -0.25),
+    LAB_WALL_H,
+  );
+
+  // Bottle sign: a tiny glass-bottle glyph hanging above the door —
+  // decoration only, a handful of flat fills on top of the shaded roof.
+  const anchor = b.door ?? { x: x + w / 2, y: y + h };
+  const p = project(anchor.x, anchor.y);
+  const signBaseY = p.sy - LAB_WALL_H - LAB_ROOF_H - 12;
+  ctx.fillStyle = PALETTE.windowDark; // bottle glass
+  ctx.fillRect(p.sx - 3, signBaseY, 6, 8);
+  ctx.fillStyle = "#5bcf9e"; // potion liquid, teal-green
+  ctx.fillRect(p.sx - 2, signBaseY + 3, 4, 5);
+  ctx.fillStyle = PALETTE.textDim; // neck
+  ctx.fillRect(p.sx - 1, signBaseY - 2, 2, 3);
+}
+
+const FORGE_WALL_H = 46;
+const FORGE_CHIMNEY_W = 10;
+const FORGE_CHIMNEY_H = 30;
+
+/** Block + chimney, warm ember glow on its faces at night (spec). Mirrors
+ *  drawBuildingBlock's night-glow technique (`night ? windowLit :
+ *  windowDark`), same idea, different placement/color/size — an ember glow
+ *  low on the wall rather than a window partway up it. */
+function drawForge(ctx: CanvasRenderingContext2D, b: TownBuilding, night: boolean): void {
+  const { x, y, w, h } = b.footprint;
+  const wallColor = PALETTE.stone[0];
+  drawIsoBlock(ctx, x, y, w, h, FORGE_WALL_H, wallColor);
+
+  // Chimney: small, narrow, tall block at one roof corner, stacked via
+  // liftPx = wall height — same stacking idiom as the lab's/house's roof.
+  const chimneyX = x + w - FORGE_CHIMNEY_W - 4;
+  const chimneyY = y + 4;
+  drawIsoBlock(
+    ctx,
+    chimneyX,
+    chimneyY,
+    FORGE_CHIMNEY_W,
+    FORGE_CHIMNEY_W,
+    FORGE_CHIMNEY_H,
+    shade(wallColor, -0.35),
+    FORGE_WALL_H,
+  );
+
+  if (night) {
+    const pS = project(x + w, y + h);
+    const pE = project(x + w, y);
+    const pW = project(x, y + h);
+    const glowSize = 10;
+    const glowLift = FORGE_WALL_H * 0.2; // low on the wall, like a firebox
+    ctx.fillStyle = PALETTE.windowLit;
+    ctx.fillRect((pW.sx + pS.sx) / 2 - glowSize / 2, (pW.sy + pS.sy) / 2 - glowLift - glowSize / 2, glowSize, glowSize);
+    ctx.fillRect((pS.sx + pE.sx) / 2 - glowSize / 2, (pS.sy + pE.sy) / 2 - glowLift - glowSize / 2, glowSize, glowSize);
+  }
 }
 
 // ---------- main render ----------
@@ -291,6 +480,11 @@ function drawGroundTile(ctx: CanvasRenderingContext2D, wx: number, wy: number, s
 // `lastNow` to turn the rAF timestamp into a per-frame delta.
 let lastFrameTime: number | null = null;
 const helperDustParticles = new Particles();
+// Spark (forge)/leaf (garden, alchemy lab) flecks for the helper's "craft"
+// assignment animation below — same module-scope-Particles idiom as
+// helperDustParticles, kept separate since the two never burst from the
+// same spot in the same frame.
+const craftFleckParticles = new Particles();
 
 function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) {
   const s = engine.state;
@@ -300,6 +494,7 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
   const deltaMs = lastFrameTime === null ? 0 : Math.min(now - lastFrameTime, 100);
   lastFrameTime = now;
   helperDustParticles.update(deltaMs);
+  craftFleckParticles.update(deltaMs);
 
   // Backdrop behind the projected diamond (the world's four corners don't
   // reach the canvas's four corners — see iso.ts's header comment).
@@ -347,9 +542,23 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
 
   for (const b of buildings) {
     const v = buildingVisual(b);
-    if (!v) continue;
-    const key = depthKey(v.x + v.w / 2, v.y + v.h / 2);
-    drawables.push({ key, draw: () => drawBuildingBlock(ctx, v, night) });
+    if (v) {
+      const key = depthKey(v.x + v.w / 2, v.y + v.h / 2);
+      drawables.push({ key, draw: () => drawBuildingBlock(ctx, v, night) });
+      continue;
+    }
+    // Craft buildings (garden/alchemy_lab/forge, spec V2.9/issue #92): not
+    // handled by buildingVisual()/drawBuildingBlock — bespoke draw
+    // functions above, inserted into this same depth-sorted list so they
+    // clip correctly against characters/trees walking past.
+    const key = depthKey(b.footprint.x + b.footprint.w / 2, b.footprint.y + b.footprint.h / 2);
+    if (b.kind === "garden") {
+      drawables.push({ key, draw: () => drawGardenPlot(ctx, b.footprint, s.inventory) });
+    } else if (b.kind === "alchemy_lab") {
+      drawables.push({ key, draw: () => drawAlchemyLab(ctx, b) });
+    } else if (b.kind === "forge") {
+      drawables.push({ key, draw: () => drawForge(ctx, b, night) });
+    }
   }
 
   // Gate: two stone pillars flanking the road, no slab between.
@@ -479,9 +688,71 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
     });
   }
 
+  // The helper on "craft" assignment (spec V2.9, issue #92): a child sprite
+  // near the highest-unlocked craft building (forge > alchemy_lab > garden)
+  // doing a 2-frame work motion with an occasional spark/leaf fleck. Mirrors
+  // the chores/shop sweep block above almost exactly — same drawCharacter
+  // call, same depth-sorted drawable push, same feet-anchored project()
+  // placement, same name label below the feet — gated on "craft" instead of
+  // chores/shop, and skipped entirely if none of the three craft buildings
+  // exist yet (nothing to work at).
+  const craftBuilding =
+    getBuilding(buildings, "forge") ?? getBuilding(buildings, "alchemy_lab") ?? getBuilding(buildings, "garden");
+  if (craftBuilding && s.helper && s.helper.assignment === "craft") {
+    const helper = s.helper;
+    const anchor = craftBuilding.door ?? {
+      x: craftBuilding.footprint.x + craftBuilding.footprint.w / 2,
+      y: craftBuilding.footprint.y + craftBuilding.footprint.h / 2,
+    };
+    const anchorX = anchor.x + 24;
+    const anchorY = anchor.y - 6;
+    const isForge = craftBuilding.kind === "forge";
+    drawables.push({
+      key: depthKey(anchorX, anchorY),
+      draw: () => {
+        const { sx, sy } = project(anchorX, anchorY);
+        const drawX = sx - 20;
+        const drawY = sy - CHILD_SPRITE_H;
+        drawCharacter(ctx, helper, drawX, drawY, 0, "SW", "child");
+
+        // Work motion: same 2-frame swing cadence as the broom sweep above
+        // (reused timing constant for visual consistency), a small
+        // tool/hand mark shifting between two ground-level positions,
+        // outside the sprite's own silhouette the same way the broom is.
+        const workFrame = Math.floor(now / 300) % 2;
+        const toolX = sx + 22 + (workFrame === 0 ? 0 : 8);
+        const toolY = sy - 28 + (workFrame === 0 ? 0 : -6);
+        rect(ctx, toolX, toolY, PX * 2, PX * 2, isForge ? "#c0392b" : PALETTE.foliage);
+
+        // Spark (near the forge) or leaf fleck (near the garden/lab),
+        // occasionally — ambience only, so Math.random() (never a fixed
+        // formula, the determinism-vs-liveliness gotcha), mirroring the
+        // sweep's dust-fleck gating exactly.
+        if (Math.random() < 0.02) {
+          craftFleckParticles.burst(toolX + PX, toolY, {
+            count: 1 + Math.floor(Math.random() * 2),
+            colors: isForge ? ["#ffb347", "#e8542c"] : ["#4a7a45", "#2e5429"],
+            speed: isForge ? 40 : 26,
+            spread: 1,
+            gravity: isForge ? -20 : 60,
+            life: 0.5,
+            size: PX,
+          });
+        }
+
+        ctx.fillStyle = PALETTE.textLight;
+        ctx.font = `${2.5 * PX}px monospace`;
+        ctx.textAlign = "center";
+        ctx.fillText(helper.name.split(" ")[0], sx, drawY - PX);
+        ctx.textAlign = "left";
+      },
+    });
+  }
+
   drawables.sort((a, b) => a.key - b.key);
   for (const d of drawables) d.draw();
   helperDustParticles.draw(ctx);
+  craftFleckParticles.draw(ctx);
 
   // Day/night tint over everything — same technique as the old flat view:
   // a translucent overlay darkens every tile/face tone already painted, and

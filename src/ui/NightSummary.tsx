@@ -8,10 +8,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { ITEM_DEFS } from "../entities/Item";
 import type { GameEngine } from "../game/GameEngine";
 import { ledgerInsights } from "../game/Ledger";
 import type { GameState } from "../types";
 import { PALETTE } from "../utils/constants";
+import { getBuilding } from "../utils/TownBuildings";
 
 interface DaySnapshot {
   day: number;
@@ -33,8 +35,44 @@ function snapshot(s: GameState): DaySnapshot {
   };
 }
 
+interface CraftItemCounts {
+  herb: number;
+  moon: number;
+  potion: number;
+}
+
+interface ProductionTally {
+  herb: number;
+  moon: number;
+  brews: number;
+}
+
+/** Counts craft-track items across BOTH inventory and shelves (combined),
+ *  so the total is robust against the player shelving a just-produced item
+ *  between polls — the total only drops if something actually sells, which
+ *  is astronomically unlikely inside a 250ms window. */
+function countCraftItems(s: GameState): CraftItemCounts {
+  const count = (name: string) =>
+    s.inventory.filter((it) => it.name === name).length +
+    s.shelves.filter((it) => it?.name === name).length;
+  return {
+    herb: count(ITEM_DEFS.herb_bundle.name),
+    moon: count(ITEM_DEFS.moon_blossom.name),
+    potion: count(ITEM_DEFS.health_potion.name),
+  };
+}
+
 export function NightSummary({ engine }: { engine: GameEngine }) {
   const dayStart = useRef<DaySnapshot>(snapshot(engine.state));
+  // Garden/lab production runs atomically inside GameEngine.onNewDay() — by
+  // the time this poll notices s.day changed, runCraftProduction(s) has
+  // already run (s.day flips, THEN production, all inside one 250ms-poll-
+  // invisible tick — see onNewDay()). There's no "before" state to diff
+  // against using the day-change instant alone, so every tick captures item
+  // counts unconditionally; the day-change branch below reconstructs the
+  // night's production from the delta against the last observed counts.
+  const lastPollItemCounts = useRef<CraftItemCounts>(countCraftItems(engine.state));
+  const lastProduction = useRef<ProductionTally>({ herb: 0, moon: 0, brews: 0 });
   const [showing, setShowing] = useState(false);
   const [dismissedDay, setDismissedDay] = useState<number | null>(null);
   const [, setTick] = useState(0);
@@ -42,11 +80,33 @@ export function NightSummary({ engine }: { engine: GameEngine }) {
   useEffect(() => {
     const id = setInterval(() => {
       const s = engine.state;
+      const currentCounts = countCraftItems(s);
       // New day: the previous day's baseline is no longer useful.
       if (s.day !== dayStart.current.day) {
+        const prev = lastPollItemCounts.current;
+        const herbDelta = currentCounts.herb - prev.herb;
+        const moonDelta = currentCounts.moon - prev.moon;
+        const potionDelta = currentCounts.potion - prev.potion;
+        const brews = Math.max(0, potionDelta);
+        lastProduction.current = {
+          // Add back what the lab consumed the same tick: the lab eats
+          // exactly 1 herb + 1 moon in the SAME runCraftProduction() call
+          // that may also add the garden's fresh herb/moon that same
+          // morning (both happen inside one atomic tick), so a raw delta
+          // undercounts gross garden output by whatever the lab ate. Exact
+          // under normal play — herb_bundle/moon_blossom are produced only
+          // by the garden and consumed only by the lab. Known edge case: if
+          // the player manually shelves-and-sells a raw herb_bundle/
+          // moon_blossom in the ~250ms window right at rollover, this could
+          // be off by one — negligible.
+          herb: Math.max(0, herbDelta + brews),
+          moon: Math.max(0, moonDelta + brews),
+          brews,
+        };
         dayStart.current = snapshot(s);
         setDismissedDay(null);
       }
+      lastPollItemCounts.current = currentCounts;
       setShowing(s.phase === "night" && s.view !== "gameover");
       setTick((t) => t + 1);
     }, 250);
@@ -87,6 +147,8 @@ export function NightSummary({ engine }: { engine: GameEngine }) {
         </div>
 
         <Reactions ledger={s.ledger} />
+
+        <Production s={s} lastProduction={lastProduction.current} />
 
         {insights.length > 0 && (
           <div style={insightsStyle}>
@@ -134,6 +196,56 @@ function Reactions({ ledger }: { ledger: GameState["ledger"] }) {
       <span style={{ color: "#d98a3a" }}>🙁 {r.unhappy}</span>
       <span style={{ color: "#c0392b" }}>😠 {r.angry}</span>
       <span style={{ color: PALETTE.textDim, fontSize: 11 }}>reactions today</span>
+    </div>
+  );
+}
+
+/** Last night's craft-track production (spec V2.9, issue #92): garden/lab
+ *  output reconstructed by the poll effect above, forge orders/repairs read
+ *  straight off state, payroll previewed the same way the engine will
+ *  charge it at tonight's rollover. A complete no-op — matching this
+ *  repo's "no-craft path is structurally a no-op" convention already
+ *  established in Property.ts — for every pre-#91 save and every save
+ *  where the player hasn't touched the craft track. */
+function Production({ s, lastProduction }: { s: GameState; lastProduction: ProductionTally }) {
+  const garden = getBuilding(s.buildings, "garden");
+  const lab = getBuilding(s.buildings, "alchemy_lab");
+  const forge = getBuilding(s.buildings, "forge");
+  if (!garden && !lab && !forge && s.staff.length === 0) return null;
+
+  const forgeOrders = forge?.lastProducedDay === s.day ? 1 : 0;
+  const repairsCount = s.messages.filter(
+    (m) => m.day === s.day && m.type === "system" && m.content.includes("repaired at the forge"),
+  ).length;
+  const repairRevenue = s.ledger.repairRevenue;
+  // Payroll for day N is deducted at the N->N+1 rollover, so it never
+  // lands in the "live" ledger this panel reads during day N's night phase
+  // (see GameEngine.onNewDay()'s staff loop, which runs before rotateLedger).
+  // This panel shows "tonight," and payroll IS charged as part of tonight's
+  // rollover, so preview it read-only the same way the engine will compute
+  // it rather than showing a stale/zero historical figure.
+  const payroll = s.staff.reduce((sum, st) => sum + Math.round(st.cut * s.ledger.revenue), 0);
+
+  return (
+    <div style={rowsStyle}>
+      <div style={{ color: PALETTE.textDim, fontSize: 11 }}>production tonight</div>
+      {garden && (
+        <Row
+          label="Garden yielded"
+          value={`${lastProduction.herb} herb, ${lastProduction.moon} moon`}
+          good={lastProduction.herb + lastProduction.moon > 0}
+        />
+      )}
+      {lab && <Row label="Lab brewed" value={lastProduction.brews} good={lastProduction.brews > 0} />}
+      {forge && <Row label="Forge orders" value={forgeOrders} good={forgeOrders > 0} />}
+      {(forge || repairsCount > 0 || repairRevenue > 0) && (
+        <Row
+          label="Repairs done"
+          value={repairRevenue > 0 ? `${repairsCount} (${repairRevenue}g)` : repairsCount}
+          good={repairsCount > 0}
+        />
+      )}
+      {s.staff.length > 0 && <Row label="Payroll (tonight)" value={`${payroll}g`} bad={payroll > 0} />}
     </div>
   );
 }

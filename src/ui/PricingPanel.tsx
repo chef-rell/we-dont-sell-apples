@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { GameEngine } from "../game/GameEngine";
-import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
+import { drawItemWithRarity, ICON_CELL, rarityNameColor } from "../rendering/ItemRenderer";
 import type { Item } from "../types";
 import { PALETTE, PX } from "../utils/constants";
 
@@ -104,7 +104,9 @@ export function PricingPanel({
       <div style={titleRow}>
         <ItemIcon item={item} />
         <div>
-          <div style={{ color: PALETTE.textLight, fontSize: 15 }}>{item.name}</div>
+          <div style={{ color: rarityNameColor(item, PALETTE.textLight), fontSize: 15 }}>
+            {item.name}
+          </div>
           <div style={{ color: PALETTE.textDim, fontSize: 12 }}>
             {item.category} · quality {item.quality}/10
             {suggestion?.fromSale && (
@@ -188,7 +190,7 @@ function ItemIcon({ item }: { item: Item }) {
     ctx.clearRect(0, 0, ICON_PX, ICON_PX);
     ctx.save();
     ctx.scale(ICON_SCALE, ICON_SCALE);
-    drawItemIcon(ctx, item, 0, 0);
+    drawItemWithRarity(ctx, item, 0, 0);
     ctx.restore();
   }, [item]);
   return <canvas ref={ref} width={ICON_PX} height={ICON_PX} style={{ imageRendering: "pixelated" }} />;

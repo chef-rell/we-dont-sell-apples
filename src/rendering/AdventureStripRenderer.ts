@@ -20,7 +20,7 @@
 
 import { CHILD_SPRITE_H, drawCharacter } from "./CharacterRenderer";
 import type { Facing } from "./CharacterRenderer";
-import { drawItemIcon } from "./ItemRenderer";
+import { drawItemIcon, drawItemWithRarity, ICON_CELL, spawnRaritySparkle } from "./ItemRenderer";
 import { shade } from "./iso";
 import { drawMonster, MONSTER_CELL } from "./MonsterRenderer";
 import { Particles } from "./Particles";
@@ -32,9 +32,11 @@ import type {
   AdventureScript,
   AdventureScriptEvent,
   DayPhase,
+  Enchantment,
   GameState,
   Helper,
   ItemCategory,
+  ItemRarity,
 } from "../types";
 import { DAY_SKY, PALETTE, PHASE_BOUNDS, PX, STRIP_H, WORLD_W } from "../utils/constants";
 
@@ -137,7 +139,7 @@ interface FloatingLabel {
   color: string;
   bornAt: number;
   life: number; // ms
-  icon?: { icon: string; category: ItemCategory };
+  icon?: { icon: string; category: ItemCategory; rarity?: ItemRarity; enchantments?: Enchantment[] };
 }
 
 interface Flash {
@@ -251,9 +253,12 @@ function fireEffect(ev: AdventureScriptEvent, now: number): void {
           color: PALETTE.gold,
           bornAt: now,
           life: 1900,
-          icon: { icon: def.icon, category: def.category },
+          icon: { icon: def.icon, category: def.category, rarity: ev.itemRarity, enchantments: ev.itemEnchantments },
         });
         particles.burst(x, y - 60, { count: 4, colors: [PALETTE.gold, "#f4dc9a"], speed: 70, spread: 1, gravity: 130, life: 0.6 });
+        if (ev.itemRarity === "rare" || ev.itemRarity === "legendary") {
+          spawnRaritySparkle(particles, { rarity: ev.itemRarity }, x - 16, y - 72 - 34, ICON_CELL * PX);
+        }
       }
       break;
     }
@@ -536,7 +541,18 @@ function drawLabels(ctx: CanvasRenderingContext2D, now: number): void {
     const t = (now - l.bornAt) / l.life;
     const rise = t * 20;
     ctx.globalAlpha = Math.max(0, 1 - t);
-    if (l.icon) drawItemIcon(ctx, l.icon, l.x - 16, l.y - rise - 34);
+    if (l.icon) {
+      if (l.icon.rarity) {
+        drawItemWithRarity(
+          ctx,
+          { icon: l.icon.icon, category: l.icon.category, rarity: l.icon.rarity, enchantments: l.icon.enchantments ?? [] },
+          l.x - 16,
+          l.y - rise - 34,
+        );
+      } else {
+        drawItemIcon(ctx, l.icon, l.x - 16, l.y - rise - 34);
+      }
+    }
     ctx.font = `${2.5 * PX}px monospace`;
     ctx.textAlign = "center";
     ctx.fillStyle = l.color;

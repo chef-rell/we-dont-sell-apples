@@ -5,9 +5,10 @@
 // icon key is unknown, we fall back to a sensible default per category, so
 // Developer A can add new items without a rendering change breaking them.
 
-import type { Item, ItemCategory } from "../types";
+import type { Enchantment, Item, ItemCategory, ItemRarity } from "../types";
 import { PALETTE, PX } from "../utils/constants";
-import { px } from "./PixelRenderer";
+import type { Particles } from "./Particles";
+import { px, rect } from "./PixelRenderer";
 
 // Every icon draws inside an 8×8 grid cell (32×32 world px at PX=4).
 export const ICON_CELL = 8; // grid units
@@ -34,6 +35,11 @@ const C = {
   ration: "#b4783c",
   gold: PALETTE.gold,
   dark: "#2c1810",
+  // ---- Enchantment glyph accents (spec V2.9, issue #92) ----
+  bone: "#e8dfc8",
+  flameCore: "#f4b942",
+  flameHot: "#e8622c",
+  heartPink: "#e85a7a",
 } as const;
 
 type IconFn = (ctx: CanvasRenderingContext2D, gx: number, gy: number) => void;
@@ -225,4 +231,169 @@ export function drawItemIcon(
 ): void {
   const draw = ICONS[item.icon] ?? CATEGORY_FALLBACK[item.category] ?? sword;
   draw(ctx, x / PX, y / PX);
+}
+
+// ---------- Rarity visuals (spec V2.9, issue #92) ----------
+//
+// common — nothing; uncommon — green border glow; rare — blue border glow +
+// subtle sparkle; legendary — purple/gold border glow + persistent sparkle +
+// gold name text. `drawItemWithRarity` is a drop-in, fully static replacement
+// for `drawItemIcon` at any existing call site (same (ctx, item, x, y) shape,
+// works inside a `ctx.scale()` block exactly like `drawItemIcon` does) — no
+// `now`/animation param, so one-shot `useEffect` canvases render correctly too.
+
+/** Border glow colors by rarity. Empty = no glow drawn. Legendary carries two
+ *  tones (purple + gold) so both are always visibly present at once. */
+export const RARITY_GLOW_COLORS: Record<ItemRarity, string[]> = {
+  common: [],
+  uncommon: [PALETTE.rarityUncommon],
+  rare: [PALETTE.rarityRare],
+  legendary: [PALETTE.rarityLegendary, PALETTE.gold],
+};
+
+/** Gold for legendary item names (spec: "item name in gold text"); every
+ *  other rarity keeps the caller's own text color unchanged. */
+export function rarityNameColor(
+  item: Pick<Item, "rarity">,
+  defaultColor: string,
+): string {
+  return item.rarity === "legendary" ? PALETTE.gold : defaultColor;
+}
+
+/** Hollow rectangular frame, thickness `t`, in the caller's current transform
+ *  units — the same hollow-frame idiom as ShopView's local `outline()`. */
+function ringFrame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  t: number,
+  color: string,
+): void {
+  rect(ctx, x, y, w, t, color); // top
+  rect(ctx, x, y + h - t, w, t, color); // bottom
+  rect(ctx, x, y, t, h, color); // left
+  rect(ctx, x + w - t, y, t, h, color); // right
+}
+
+// ---- Enchantment corner glyphs: flame / shield / heart / skull ----
+// Tiny ~3x3-grid-unit accents, same chunky-rect style as the icons above.
+
+const flameGlyph: IconFn = (ctx, gx, gy) => {
+  px(ctx, gx + 1, gy, 1, 1, C.flameCore); // tip
+  px(ctx, gx, gy + 1, 3, 1, C.flameHot); // body
+  px(ctx, gx + 1, gy + 2, 1, 1, C.potion); // base
+};
+
+const shieldGlyph: IconFn = (ctx, gx, gy) => {
+  px(ctx, gx, gy, 3, 2, C.steel); // body
+  px(ctx, gx + 1, gy + 2, 1, 1, C.steelDark); // point
+};
+
+const heartGlyph: IconFn = (ctx, gx, gy) => {
+  px(ctx, gx, gy, 1, 1, C.heartPink); // left lobe
+  px(ctx, gx + 2, gy, 1, 1, C.heartPink); // right lobe
+  px(ctx, gx, gy + 1, 3, 1, C.heartPink); // body
+  px(ctx, gx + 1, gy + 2, 1, 1, C.heartPink); // point
+};
+
+const skullGlyph: IconFn = (ctx, gx, gy) => {
+  px(ctx, gx, gy, 3, 2, C.bone); // cranium
+  px(ctx, gx, gy + 1, 1, 1, C.dark); // eye socket
+  px(ctx, gx + 2, gy + 1, 1, 1, C.dark); // eye socket
+  px(ctx, gx + 1, gy + 2, 1, 1, C.bone); // jaw
+};
+
+/** Enchantment -> corner-glyph mapping (issue #92: flame/skull/shield/heart). */
+const ENCHANT_GLYPHS: Record<Enchantment, IconFn> = {
+  flame: flameGlyph,
+  warding: shieldGlyph,
+  vigor: heartGlyph,
+  lifesteal: skullGlyph,
+};
+
+/**
+ * Drop-in replacement for `drawItemIcon` that layers rarity + enchantment
+ * visuals on top of the base icon: border glow (uncommon+), static sparkle
+ * accents (rare+), and up to 2 enchantment corner glyphs. Fully synchronous
+ * and deterministic — no `Math.random()`, no time input — so it looks
+ * identical on every redraw, including one-shot canvases that never re-render.
+ */
+export function drawItemWithRarity(
+  ctx: CanvasRenderingContext2D,
+  item: Pick<Item, "icon" | "category" | "rarity" | "enchantments">,
+  x: number,
+  y: number,
+): void {
+  drawItemIcon(ctx, item, x, y);
+
+  const box = ICON_CELL * PX;
+  const gx = x / PX;
+  const gy = y / PX;
+
+  const glowColors = RARITY_GLOW_COLORS[item.rarity];
+  if (glowColors.length === 1) {
+    ringFrame(ctx, x - PX, y - PX, box + 2 * PX, box + 2 * PX, PX, glowColors[0]);
+  } else if (glowColors.length === 2) {
+    // Two concentric rings so both the outer and inner tone always read —
+    // legendary's "purple/gold" is non-negotiable per spec.
+    ringFrame(ctx, x - 2 * PX, y - 2 * PX, box + 4 * PX, box + 4 * PX, PX, glowColors[0]);
+    ringFrame(ctx, x - PX, y - PX, box + 2 * PX, box + 2 * PX, PX, glowColors[1]);
+  }
+
+  if (item.rarity === "rare") {
+    // One small, subtle highlight dot — "subtle sparkle particles".
+    px(ctx, gx + ICON_CELL - 1, gy - 1, 1, 1, PALETTE.rarityRare);
+  } else if (item.rarity === "legendary") {
+    // Persistent, brighter multi-dot sparkle in the legendary colors + white.
+    px(ctx, gx + ICON_CELL - 1, gy - 1, 1, 1, "#ffffff");
+    px(ctx, gx + ICON_CELL, gy + 1, 1, 1, PALETTE.rarityLegendary);
+    px(ctx, gx - 1, gy - 1, 1, 1, PALETTE.gold);
+  }
+
+  if (item.enchantments.length > 0) {
+    // Up to 2 tiny glyphs along the icon's bottom edge, right-to-left.
+    item.enchantments.slice(0, 2).forEach((ench, i) => {
+      ENCHANT_GLYPHS[ench](ctx, gx + 5 - i * 3, gy + 5);
+    });
+  }
+}
+
+/**
+ * Optional live-particle sparkle for callers that already own a `Particles`
+ * instance and redraw every frame (ShopView's shelf loop, the adventure
+ * strip's loot-drop labels). No-op for common/uncommon. Spawns exactly one
+ * burst per call — the CALLER is responsible for throttling call frequency
+ * (e.g. a `Math.random()` gate per frame) per CLAUDE.md's determinism-vs-
+ * liveliness rule: this shared helper stays gate-free.
+ */
+export function spawnRaritySparkle(
+  particles: Particles,
+  item: Pick<Item, "rarity">,
+  x: number,
+  y: number,
+  sizePx: number,
+): void {
+  if (item.rarity === "rare") {
+    particles.burst(x + sizePx / 2, y + sizePx / 2, {
+      count: 1,
+      colors: [PALETTE.rarityRare, "#ffffff"],
+      speed: 20,
+      spread: 1,
+      gravity: -10,
+      life: 0.6,
+      size: PX,
+    });
+  } else if (item.rarity === "legendary") {
+    particles.burst(x + sizePx / 2, y + sizePx / 2, {
+      count: 2,
+      colors: [PALETTE.rarityLegendary, PALETTE.gold, "#ffffff"],
+      speed: 24,
+      spread: 1,
+      gravity: -10,
+      life: 0.7,
+      size: PX,
+    });
+  }
 }
