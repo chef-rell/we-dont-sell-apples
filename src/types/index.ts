@@ -153,6 +153,48 @@ export interface AdventureOutcome {
   brokenItems: string[];  // names of gear that broke during this adventure
 }
 
+// ---------- Adventure scripts (spec V2.5/V2.6, issue #76) ----------
+//
+// v2 combat: a party's whole afternoon is generated ONCE, with a stored
+// seed, at the moment they set out. Facts (who lives, what breaks, what
+// drops, how much gold enters town) are final the instant the script
+// exists — `events` are presentation timestamps for the wilderness strip
+// (issue #78) to play back at its own pace; nothing downstream re-decides
+// anything. `memberOutcomes` are per-member `AdventureOutcome`s (same shape
+// v1 produced solo) applied at the same point in the day v1 outcomes were.
+
+export type AdventureScriptEventType =
+  | "march"
+  | "encounter"
+  | "hit"
+  | "monsterHit"
+  | "gearBreak"
+  | "death"
+  | "lootDrop"
+  | "goldDrop"
+  | "victory"
+  | "defeat"
+  | "returnMarch";
+
+export interface AdventureScriptEvent {
+  t: number; // 0..1 through the afternoon
+  type: AdventureScriptEventType;
+  actorId?: string; // adventurer UUID this event is about
+  monster?: string; // monster name, for encounter/death/hit-shaped events
+  itemName?: string; // for gearBreak/lootDrop
+  value?: number; // damage/gold amount, event-dependent
+}
+
+export interface AdventureScript {
+  id: string;
+  day: number;
+  seed: number; // stored so any client replays this exact script (spec V2.5)
+  night: boolean;
+  partyIds: string[]; // adventurer UUIDs, in marching order
+  events: AdventureScriptEvent[];
+  memberOutcomes: AdventureOutcome[]; // one per partyIds entry, final at generation
+}
+
 /** A returning adventurer offering loot to the player. Dev B's
  *  buy-from-adventurer UI consumes this queue; accept/decline via engine. */
 export interface LootOffer {
@@ -316,6 +358,11 @@ export interface GameState {
   offlineSummary: OfflineSummary | null; // set on load after an away period; UI clears it
   reputation: number; // -1..1, shop's town-wide reputation (spec V2.9); recomputed and persisted each rollover
   buildings: TownBuilding[]; // town geometry registry (spec V2.8, issue #56); see defaultBuildings()
+  /** The day's party AdventureScript, generated once at the afternoon-phase
+   *  boundary (spec V2.5/V2.6, issue #76); null when nobody adventured today
+   *  or after day rollover clears it. Additive; `loadGame()` defaults old
+   *  saves to null. */
+  currentScript: AdventureScript | null;
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

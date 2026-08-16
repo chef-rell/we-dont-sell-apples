@@ -10,6 +10,8 @@ import { makeItem, startingInventory } from "../entities/Item";
 import { loadGame, saveGame } from "./GameStatePersistence";
 import { elapsedOfflineDays, runOfflineSim } from "./OfflineSim";
 import { arrivalBonus, processDayEnd } from "./MoraleSystem";
+import { generateAdventureScript } from "./Combat";
+import { makeRng } from "../utils/rng";
 import { freshLedger, recordDonation, recordLootBuy, recordRestock, rotateLedger } from "./Ledger";
 import {
   fallbackReply,
@@ -72,6 +74,7 @@ export class GameEngine {
     const s = this.state;
     if (s.speed === 0) return;
 
+    const prevPhase = s.phase;
     const t = advanceTime(s.timeOfDay, deltaMs, s.speed);
     if (t >= 1) {
       s.day += 1;
@@ -80,6 +83,16 @@ export class GameEngine {
       s.timeOfDay = t;
     }
     s.phase = phaseFor(s.timeOfDay);
+
+    // v2 party formation (spec V2.5/V2.6, issue #76): the whole day's
+    // AdventureScript is generated ONCE, right as afternoon begins, for
+    // every adventurer whose day takes them adventuring. Facts are final
+    // from this moment; stepAdventurer's per-member states (walk to gate,
+    // "adventuring", resolve at evening) are untouched — they just read
+    // their slice of this script instead of rolling their own solo outcome.
+    if (prevPhase !== "afternoon" && s.phase === "afternoon") {
+      this.formAfternoonParty();
+    }
 
     const dt = (deltaMs / 1000) * s.speed;
     const dayRolled = t >= 1;
@@ -98,6 +111,31 @@ export class GameEngine {
     if (dayRolled) this.onNewDay();
   }
 
+  /**
+   * Form the day's party (spec V2.6): every alive adventurer whose plan for
+   * today is "adventure" and hasn't already adventured marches together as
+   * ONE AdventureScript (party of 1 is fine — solo adventurers still get a
+   * script, just sized for one). Deterministic membership: who's in the
+   * party is an engine fact decided here, not by walk timing. A `null`
+   * script (nobody adventuring today) is a valid, common result.
+   */
+  private formAfternoonParty(): void {
+    const s = this.state;
+    const party = s.adventurers.filter((a) => {
+      if (!a.alive) return false;
+      const bc = this.contextFor(a.id);
+      return bc.plan === "adventure" && !bc.adventured;
+    });
+    if (party.length === 0) {
+      s.currentScript = null;
+      return;
+    }
+    // Seed drawn live (spec V2.5: liveliness) but stored on the script so
+    // any replay — a reload mid-afternoon, a future server — is exact.
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    s.currentScript = generateAdventureScript(party, s.day, { seed }, makeRng(seed));
+  }
+
   // ---------- Phase 4: adventure outcomes, death, arrivals, loot offers ----------
 
   private handleOutcome(a: Adventurer, outcome: AdventureOutcome): void {
@@ -112,8 +150,18 @@ export class GameEngine {
           other.morale = Math.max(0, other.morale - 12);
         }
       }
-      this.replacementDueDay = s.day + REPLACEMENT_DAYS_MIN +
+      // Wipe stabilizer (spec V2.6, mandatory with parties): the graveyard
+      // is functional, not flavor. Each death this wave pulls the next
+      // replacement wave's due date in further (floor of 1 day out) and —
+      // in onNewDay() below — enlarges it. A six-death wipe recovers in
+      // days, not the dozen-plus it'd take trickling in one at a time.
+      this.deathsSinceLastArrival += 1;
+      const accel = Math.min(this.deathsSinceLastArrival - 1, REPLACEMENT_DAYS_MIN - 1);
+      const dueSoonest =
+        s.day + Math.max(1, REPLACEMENT_DAYS_MIN - accel) +
         Math.floor(Math.random() * (REPLACEMENT_DAYS_MAX - REPLACEMENT_DAYS_MIN + 1));
+      this.replacementDueDay =
+        this.replacementDueDay === null ? dueSoonest : Math.min(this.replacementDueDay, dueSoonest);
     }
 
     // AI narration (§7 decision point 4): fire-and-forget; the outcome is
@@ -141,10 +189,14 @@ export class GameEngine {
   }
 
   private replacementDueDay: number | null = null;
+  /** Wipe stabilizer accumulator (spec V2.6): deaths since the last
+   *  replacement wave landed; sizes and hastens the next one. */
+  private deathsSinceLastArrival = 0;
 
   private onNewDay(): void {
     const s = this.state;
     rotateLedger(s, s.day); // close yesterday's book before anything else
+    s.currentScript = null; // the day's party script doesn't survive rollover (spec V2.5)
     saveGame(s); // auto-save at the day rollover (§12)
     // Loot offers don't survive the night.
     s.lootOffers = s.lootOffers.filter((o) => o.day >= s.day);
@@ -195,17 +247,31 @@ export class GameEngine {
     const due = this.replacementDueDay !== null && s.day >= this.replacementDueDay;
     if ((due || aliveCount < MIN_ADVENTURER_COUNT) && aliveCount < STARTING_ADVENTURER_COUNT) {
       this.replacementDueDay = null;
-      const newcomer = createReplacementAdventurer(s.adventurers.map((x) => x.name));
-      s.adventurers.push(newcomer);
-      this.pushMessage({
-        id: `sys-arrival-${s.day}`,
-        senderId: "system",
-        senderName: "Town",
-        type: "system",
-        content: `A new face in town: ${newcomer.name} the ${newcomer.class} has arrived.`,
-        timestamp: s.timeOfDay,
-        day: s.day,
-      });
+      // Wipe stabilizer (spec V2.6): the wave size scales with deaths since
+      // the last wave, capped by how many are actually missing — avengers
+      // and fortune-seekers hear about a bad week and come in numbers,
+      // instead of trickling in one at a time after a full wipe.
+      const deficit = STARTING_ADVENTURER_COUNT - aliveCount;
+      const waveSize = Math.max(1, Math.min(deficit, Math.ceil(this.deathsSinceLastArrival / 2)));
+      this.deathsSinceLastArrival = 0;
+      const names = s.adventurers.map((x) => x.name);
+      for (let i = 0; i < waveSize; i++) {
+        const newcomer = createReplacementAdventurer(names);
+        names.push(newcomer.name);
+        s.adventurers.push(newcomer);
+        this.pushMessage({
+          id: `sys-arrival-${s.day}-${i}`,
+          senderId: "system",
+          senderName: "Town",
+          type: "system",
+          content:
+            waveSize > 1
+              ? `A new face in town, drawn by word of the graveyard: ${newcomer.name} the ${newcomer.class} has arrived.`
+              : `A new face in town: ${newcomer.name} the ${newcomer.class} has arrived.`,
+          timestamp: s.timeOfDay,
+          day: s.day,
+        });
+      }
     }
   }
 
@@ -539,6 +605,7 @@ function createInitialState(): GameState {
     offlineSummary: null,
     reputation: 0,
     buildings: defaultBuildings(),
+    currentScript: null,
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
