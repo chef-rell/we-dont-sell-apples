@@ -1,5 +1,6 @@
 // Town View: top-down pixel scene with buildings, paths, trees, and
-// wandering adventurers (spec §3a). Owns the canvas + rAF loop for Phase 1.
+// wandering adventurers (spec §3a). Owns a canvas + rAF loop for drawing only
+// — App.tsx owns the single engine.tick loop (issue #55).
 
 import { useEffect, useRef, type MouseEvent } from "react";
 import type { GameEngine } from "../game/GameEngine";
@@ -61,12 +62,8 @@ export function TownView({
     ctx.imageSmoothingEnabled = false;
 
     let raf = 0;
-    let last = performance.now();
 
     const frame = (now: number) => {
-      const delta = Math.min(now - last, 100); // clamp tab-switch spikes
-      last = now;
-      engine.tick(delta);
       render(ctx, engine, now);
       raf = requestAnimationFrame(frame);
     };

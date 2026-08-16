@@ -41,6 +41,30 @@ export default function App() {
     return () => clearInterval(id);
   }, [engine]);
 
+  // Single tick owner (issue #55): views used to each run their own rAF loop
+  // and call engine.tick themselves, which would triple-tick the engine once
+  // the v2 triptych shows all three panels at once. This is the only place
+  // that calls engine.tick — views keep their own rAF strictly for drawing.
+  // The 100ms clamp lives here (not inside tick itself) because OfflineSim
+  // and the balance harness call tick directly with large, intentional steps
+  // that must not be clamped.
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    const frame = (now: number) => {
+      const delta = Math.min(now - last, 100); // clamp tab-switch spikes
+      last = now;
+      // Mirrors the old per-view behavior: no ticking view was ever mounted
+      // once the engine ends the run, so replicate that here rather than
+      // relying solely on the engine's own speed===0 guard (the speed
+      // controls stay clickable on the game-over screen).
+      if (engine.state.view !== "gameover") engine.tick(delta);
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [engine]);
+
   // Start over after a game over: drop the save so the new engine can't resume
   // the run that just ended (§5, §12).
   const restart = () => {

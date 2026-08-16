@@ -1,8 +1,9 @@
 // Shop View: interior selling scene (spec §3b) — shelves of stock, a counter,
-// and the shopkeeper. Owns its own canvas + rAF loop and keeps the sim ticking
-// while the player is inside. Clicking a shelf item opens the Moonlighter
-// pricing panel (§6), and adventurers browsing the shop stand in front of the
-// item they're examining with their reaction to its price over their head.
+// and the shopkeeper. Owns its own canvas + rAF loop for drawing only —
+// App.tsx owns the single engine.tick loop (issue #55). Clicking a shelf item
+// opens the Moonlighter pricing panel (§6), and adventurers browsing the shop
+// stand in front of the item they're examining with their reaction to its
+// price over their head.
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
@@ -106,7 +107,6 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
     const frame = (now: number) => {
       const delta = Math.min(now - last, 100);
       last = now;
-      engine.tick(delta);
 
       // A sale throws coins over the counter.
       if (engine.state.stats.itemsSold > soldSoFar) {
