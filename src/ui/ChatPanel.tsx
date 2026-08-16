@@ -33,7 +33,10 @@ export function ChatPanel({ engine }: { engine: GameEngine }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [unread, setUnread] = useState(0);
-  const seenCount = useRef(engine.state.messages.length);
+  // Track the last message actually seen, NOT how many there were: the engine
+  // caps the buffer, so once it is full the length stops growing and a count
+  // of "new since I looked" would sit at zero however much the town says.
+  const seenId = useRef<string | null>(engine.state.messages.at(-1)?.id ?? null);
   const listRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
 
@@ -42,10 +45,13 @@ export function ChatPanel({ engine }: { engine: GameEngine }) {
       const all = engine.state.messages;
       setMessages(all.slice(-VISIBLE_MESSAGES));
       if (open) {
-        seenCount.current = all.length;
+        seenId.current = all.at(-1)?.id ?? null;
         setUnread(0);
       } else {
-        setUnread(Math.max(0, all.length - seenCount.current));
+        // Everything after the last seen message is unread. If that message has
+        // already been trimmed away, the whole buffer is new to the player.
+        const seenAt = seenId.current ? all.findIndex((m) => m.id === seenId.current) : -1;
+        setUnread(seenAt === -1 ? all.length : all.length - 1 - seenAt);
       }
     }, 250);
     return () => clearInterval(id);
@@ -78,7 +84,8 @@ export function ChatPanel({ engine }: { engine: GameEngine }) {
   if (!open) {
     return (
       <button style={tabStyle} onClick={toggle} title="Open town chat">
-        💬 Chat{unread > 0 ? ` (${unread})` : ""}
+        {/* At the buffer cap the true count is unknowable — say "at least". */}
+        💬 Chat{unread > 0 ? ` (${unread >= VISIBLE_MESSAGES ? `${VISIBLE_MESSAGES}+` : unread})` : ""}
       </button>
     );
   }
@@ -149,7 +156,9 @@ const panelStyle: CSSProperties = {
   right: 12,
   bottom: 12,
   width: 300,
-  maxHeight: "46%",
+  // Kept clear of the shop's shelving: the panel sits over the canvas, so any
+  // shelf slot underneath it would be unclickable while the chat is open.
+  maxHeight: "31%",
   background: "rgba(26,26,46,0.94)",
   border: `4px solid ${PALETTE.uiBorder}`,
   fontFamily: "monospace",

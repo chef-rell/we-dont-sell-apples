@@ -23,6 +23,8 @@ const MID_X = WORLD_W / 2; // forest edge on the left, shadow cave on the right
 const CHAR_H = 64;
 const MONSTER_PX = MONSTER_CELL * PX;
 const LOG_Y = WORLD_H - 130; // outcome log panel
+const LOG_X = 16; // left inset for log text
+const CHAT_CSS_WIDTH = 312; // ChatPanel's width plus its right margin, in CSS px
 
 // Each area stages up to four adventurer-vs-monster pairs: two on a back line
 // and two nearer the viewer, offset so a full area still reads clearly.
@@ -126,9 +128,12 @@ export function renderWilderness(
   drawArea(ctx, "forest_edge", byArea.forest_edge, outcomeFor, now);
   drawArea(ctx, "shadow_cave", byArea.shadow_cave, outcomeFor, now);
 
-  // The fallen are shown where they fell, until the day rolls over.
+  // The fallen are shown where they fell, until the day rolls over. Spaced
+  // out per area so a bad day doesn't stack every headstone on one spot.
+  const fallenByArea: Record<WildernessArea, number> = { forest_edge: 0, shadow_cave: 0 };
   for (const o of todaysOutcomes.filter((x) => !x.survived)) {
-    drawGrave(ctx, o);
+    drawGrave(ctx, o, fallenByArea[o.area]);
+    fallenByArea[o.area] += 1;
   }
 
   drawLog(ctx, s.recentOutcomes, out.length, s.phase);
@@ -240,9 +245,13 @@ function drawArea(
   ctx.fillText(label, left + 200, HORIZON - 60);
   ctx.textAlign = "left";
 
-  // Back line first so the nearer pairs overlap it. Anyone past four shares
-  // the last slot — the sim rarely sends that many to one area.
-  const staged = adventurers.map((a, i) => ({ a, slot: SLOTS[Math.min(i, SLOTS.length - 1)] }));
+  // Back line first so the nearer pairs overlap it. Past four in one area the
+  // slots are reused, nudged along so nobody stands exactly on top of anyone.
+  const staged = adventurers.map((a, i) => {
+    const slot = SLOTS[i % SLOTS.length];
+    const wrap = Math.floor(i / SLOTS.length);
+    return { a, slot: { dx: slot.dx + wrap * 26, y: slot.y } };
+  });
   for (const { a, slot } of [...staged].sort((p, q) => p.slot.y - q.slot.y)) {
     drawFight(ctx, a, outcomeFor(a), left + slot.dx, slot.y, now);
   }
@@ -349,8 +358,9 @@ function drawHpBar(ctx: CanvasRenderingContext2D, x: number, y: number, ratio: n
   );
 }
 
-function drawGrave(ctx: CanvasRenderingContext2D, outcome: AdventureOutcome) {
-  const x = outcome.area === "forest_edge" ? 380 : MID_X + 380;
+function drawGrave(ctx: CanvasRenderingContext2D, outcome: AdventureOutcome, index: number) {
+  const base = outcome.area === "forest_edge" ? 380 : MID_X + 380;
+  const x = base - index * 44; // headstones line up back along the ground
   const y = FRONT_Y - 32;
   px(ctx, x / PX, y / PX, 6, 8, PALETTE.stone[1]); // headstone
   px(ctx, x / PX + 1, y / PX - 1, 4, 1, PALETTE.stone[0]);
@@ -372,6 +382,12 @@ function drawLog(
   ctx.font = `${3 * PX}px monospace`;
   ctx.textAlign = "left";
   ctx.fillStyle = PALETTE.textDim;
+  // The chat panel is docked over the bottom-right of the stage, so log lines
+  // stop short of it rather than running underneath. It is sized in CSS pixels
+  // while this canvas is in world pixels, so convert: a smaller window scales
+  // the canvas down and the panel covers proportionally more of the world.
+  const scale = WORLD_W / (ctx.canvas.clientWidth || WORLD_W);
+  const textWidth = WORLD_W - LOG_X - CHAT_CSS_WIDTH * scale;
   // Night owls head out after dark and resolve at dawn, so the copy can't
   // assume everything happens on the afternoon-to-evening schedule.
   const night = phase === "night";
@@ -382,7 +398,7 @@ function drawLog(
     : night ?
       "Quiet out here — only night owls go out after dark"
     : `Nobody is out here right now — they head through the gate in the afternoon (${phase})`,
-    16,
+    LOG_X,
     LOG_Y + 28,
   );
 
@@ -396,10 +412,20 @@ function drawLog(
       `${o.monsterDefeated ? "Defeated" : "Escaped"} ${o.monsterName}` +
         `${o.damageTaken > 0 ? `, took ${o.damageTaken} damage` : " without a scratch"}` +
         `${o.lootItemKeys.length > 0 ? `, found ${o.lootItemKeys.length} item(s)` : ""}`;
-    ctx.fillText(`Day ${o.day}: ${truncate(summary, 108)}`, 16, y);
+    ctx.fillText(fit(ctx, `Day ${o.day}: ${summary}`, textWidth), LOG_X, y);
   });
 }
 
-function truncate(text: string, max: number) {
-  return text.length <= max ? text : text.slice(0, max - 1) + "…";
+/** Trim to what actually fits, measured rather than guessed at a character
+ *  count — AI narration is free-form and can be any length. */
+function fit(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(text.slice(0, mid) + "…").width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo) + "…";
 }

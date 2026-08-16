@@ -2,6 +2,7 @@
 // Shop/Wilderness views arrive in Phases 2 and 4.
 
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { sound } from "./audio/SoundManager";
 import { useGameAudio } from "./audio/useGameAudio";
 import { GameEngine } from "./game/GameEngine";
@@ -16,7 +17,7 @@ import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
 import { WildernessView } from "./views/WildernessView";
 import type { GameSpeed, GameView } from "./types";
-import { WORLD_W } from "./utils/constants";
+import { WORLD_H, WORLD_W } from "./utils/constants";
 
 const SPEEDS: GameSpeed[] = [1, 1.5, 2];
 
@@ -47,6 +48,13 @@ export default function App() {
     setView(engineRef.current.state.view);
     setRun((n) => n + 1);
   };
+
+  // Dev-only handle: the sim is driven by rAF, which browsers suspend in a
+  // background tab, so driving time by hand is the only reliable way to test
+  // multi-day behaviour. Stripped from production builds.
+  if (import.meta.env.DEV) {
+    (window as unknown as { engine: GameEngine }).engine = engine;
+  }
 
   useGameAudio(engine);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -106,25 +114,37 @@ export default function App() {
       </header>
       {/* The stage is exactly as wide as the canvas, so overlays (night
           summary, chat) sit over the game rather than the whole window. */}
-      <main key={run} style={{ position: "relative", maxWidth: WORLD_W, margin: "0 auto", width: "100%" }}>
-        {settingsOpen && <SettingsPanel engine={engine} onClose={() => setSettingsOpen(false)} />}
-        <OfflineSummary engine={engine} />
-        <NightSummary engine={engine} />
-        {view !== "gameover" && <Toasts engine={engine} />}
-        {view !== "gameover" && <ChatPanel engine={engine} />}
-        {view === "gameover" ?
+      <main key={run}>
+        {/* The stage is exactly the canvas box — same width AND the same 3:2
+            shape — so overlays anchor to the game, not to the leftover
+            viewport around it (main is a full-height centring flex box). */}
+        <div style={stageStyle}>
+          {settingsOpen && <SettingsPanel engine={engine} onClose={() => setSettingsOpen(false)} />}
+          <OfflineSummary engine={engine} />
+          <NightSummary engine={engine} />
+          {view !== "gameover" && <Toasts engine={engine} />}
+          {view !== "gameover" && <ChatPanel engine={engine} />}
+          {view === "gameover" ?
           <GameOverView engine={engine} onRestart={restart} />
-        : view === "shop" ?
-          <ShopView engine={engine} onLeave={() => go("town")} />
-        : view === "wilderness" ?
-          <WildernessView engine={engine} onLeave={() => go("town")} />
-        : <TownView
-            engine={engine}
-            onEnterShop={() => go("shop")}
-            onEnterWilderness={() => go("wilderness")}
-          />
-        }
+          : view === "shop" ?
+            <ShopView engine={engine} onLeave={() => go("town")} />
+          : view === "wilderness" ?
+            <WildernessView engine={engine} onLeave={() => go("town")} />
+          : <TownView
+              engine={engine}
+              onEnterShop={() => go("shop")}
+              onEnterWilderness={() => go("wilderness")}
+            />
+          }
+        </div>
       </main>
     </div>
   );
 }
+
+const stageStyle: CSSProperties = {
+  position: "relative",
+  width: "100%",
+  maxWidth: WORLD_W,
+  aspectRatio: `${WORLD_W} / ${WORLD_H}`,
+};

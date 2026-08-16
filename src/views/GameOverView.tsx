@@ -5,7 +5,7 @@
 import type { CSSProperties } from "react";
 import type { GameEngine } from "../game/GameEngine";
 import type { Adventurer } from "../types";
-import { PALETTE, WORLD_H, WORLD_W } from "../utils/constants";
+import { PALETTE, WORLD_W } from "../utils/constants";
 
 export function GameOverView({
   engine,
@@ -63,9 +63,11 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 const screenStyle: CSSProperties = {
+  // Fills the stage, which is already the canvas box — a fixed height here
+  // would spill out of it on a short window.
   width: "100%",
+  height: "100%",
   maxWidth: WORLD_W,
-  minHeight: WORLD_H,
   margin: "0 auto",
   background: "#14121a",
   border: `4px solid ${PALETTE.uiBorder}`,
