@@ -13,5 +13,8 @@ dist/
 .DS_Store
 *.log
 
+# Claude Code agent worktrees + local session files — never commit
+.claude/
+
 # KDE
 .directory

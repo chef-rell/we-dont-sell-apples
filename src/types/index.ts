@@ -290,9 +290,9 @@ export interface TownBuilding {
 // ---------- Root state ----------
 
 export interface GameState {
-  /** Save-shape version (spec V2.11). v1 saves = 1, key `wdsa_save_v1`;
-   *  v2 will bump to 2 under a new key (`wdsa_save_v2`) — v1 saves are
-   *  never read, migrated, or deleted by v2 code. */
+  /** Save-shape version (spec V2.11). v2 saves = 2, key `wdsa_save_v2`
+   *  (active since Phase 1). v1 saves (= 1, key `wdsa_save_v1`) are never
+   *  read, migrated, or deleted by v2 code. */
   saveVersion: number;
   day: number;
   timeOfDay: number; // 0-1 through the day cycle

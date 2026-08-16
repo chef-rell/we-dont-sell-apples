@@ -4,7 +4,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { GameEngine } from "./GameEngine";
-import { loadGame, saveGame } from "./GameStatePersistence";
+import { loadGame, saveGame, SAVE_KEY } from "./GameStatePersistence";
 import { makeItem } from "../entities/Item";
 import { resolveAdventure } from "./Combat";
 
@@ -129,28 +129,37 @@ describe("save/load", () => {
     expect(loaded!.speed).toBe(1); // never resumes paused/fast
   });
 
-  it("round-trips saveVersion (#57)", () => {
+  it("round-trips saveVersion (#57, v2 key since #71)", () => {
     const e = freshEngine();
-    expect(e.state.saveVersion).toBe(1);
+    expect(e.state.saveVersion).toBe(2);
     saveGame(e.state);
     const loaded = loadGame();
-    expect(loaded!.saveVersion).toBe(1);
+    expect(loaded!.saveVersion).toBe(2);
   });
 
-  it("defaults saveVersion to 1 for a save written without it (#57)", () => {
+  it("defaults saveVersion to 2 for a save written without it (#57/#71)", () => {
     const e = freshEngine();
     saveGame(e.state);
-    const raw = JSON.parse(localStorage.getItem("wdsa_save_v1")!);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
     delete raw.saveVersion;
-    localStorage.setItem("wdsa_save_v1", JSON.stringify(raw));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
     const loaded = loadGame();
-    expect(loaded!.saveVersion).toBe(1);
+    expect(loaded!.saveVersion).toBe(2);
+  });
+
+  it("never reads or touches the v1 save key (#71, spec V2.11)", () => {
+    localStorage.setItem("wdsa_save_v1", '{"day":9,"legacy":"v1 save — must survive untouched"}');
+    const e = freshEngine();
+    saveGame(e.state); // writes wdsa_save_v2 only
+    expect(SAVE_KEY).toBe("wdsa_save_v2");
+    expect(loadGame()!.day).toBe(e.state.day); // loads from v2, not the day-9 v1 blob
+    expect(localStorage.getItem("wdsa_save_v1")).toBe('{"day":9,"legacy":"v1 save — must survive untouched"}');
   });
 
   it("rejects corrupt saves", () => {
-    localStorage.setItem("wdsa_save_v1", "{not json");
+    localStorage.setItem(SAVE_KEY, "{not json");
     expect(loadGame()).toBeNull();
-    localStorage.setItem("wdsa_save_v1", JSON.stringify({ hello: "world" }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ hello: "world" }));
     expect(loadGame()).toBeNull();
   });
 
@@ -165,9 +174,9 @@ describe("save/load", () => {
   it("defaults buildings for a save written before the registry existed (#56)", () => {
     const e = freshEngine();
     saveGame(e.state);
-    const raw = JSON.parse(localStorage.getItem("wdsa_save_v1")!);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
     delete raw.buildings;
-    localStorage.setItem("wdsa_save_v1", JSON.stringify(raw));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
     const loaded = loadGame();
     expect(loaded!.buildings.length).toBeGreaterThan(0);
     expect(loaded!.buildings.some((b) => b.id === "shop")).toBe(true);
