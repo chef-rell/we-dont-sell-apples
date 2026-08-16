@@ -123,6 +123,33 @@ export interface Monster {
 
 export type WildernessArea = "forest_edge" | "shadow_cave";
 
+// ---------- Adventures & loot (spec §8) ----------
+
+/** Deterministic combat outcome — computed by stats BEFORE any AI narration.
+ *  The Wilderness View animates this; the AI describes it; neither alters it. */
+export interface AdventureOutcome {
+  adventurerId: string;
+  area: WildernessArea;
+  day: number;
+  monsterName: string;
+  monsterDefeated: boolean;
+  damageTaken: number;
+  survived: boolean;
+  lootItemKeys: string[]; // ITEM_DEFS keys found
+  narration: string | null; // AI text, arrives async; null until then/fallback
+}
+
+/** A returning adventurer offering loot to the player. Dev B's
+ *  buy-from-adventurer UI consumes this queue; accept/decline via engine. */
+export interface LootOffer {
+  id: string;
+  adventurerId: string;
+  adventurerName: string;
+  item: Item;
+  askPrice: number;
+  day: number; // offers expire at the end of the day they're made
+}
+
 // ---------- Chat (message bus from day one; spec §16) ----------
 
 export type ChatMessageType =
@@ -181,6 +208,8 @@ export interface GameState {
   shopLevel: number; // 1-4
   adventurers: Adventurer[];
   messages: ChatMessage[];
+  lootOffers: LootOffer[]; // pending buy-from-adventurer offers (spec §3b/§8)
+  recentOutcomes: AdventureOutcome[]; // last few adventures, for wilderness view + summaries
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

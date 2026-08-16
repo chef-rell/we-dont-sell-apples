@@ -25,6 +25,11 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
   simple_ring: { name: "Simple Ring", category: "accessory", baseValue: 25, quality: 2, icon: "ring" },
   crude_hide: { name: "Crude Hide", category: "loot", baseValue: 6, quality: 1, icon: "hide" },
   small_gem: { name: "Small Gem", category: "loot", baseValue: 14, quality: 2, icon: "gem" },
+  stolen_trinket: { name: "Stolen Trinket", category: "loot", baseValue: 12, quality: 2, icon: "ring" },
+  bat_wing: { name: "Bat Wing", category: "loot", baseValue: 8, quality: 1, icon: "hide" },
+  echo_crystal: { name: "Echo Crystal", category: "loot", baseValue: 22, quality: 3, icon: "gem" },
+  core_shard: { name: "Core Shard", category: "loot", baseValue: 35, quality: 4, icon: "gem" },
+  golem_plate: { name: "Golem Plate", category: "loot", baseValue: 45, quality: 4, icon: "artifact" },
 };
 
 export function makeItem(defKey: string): Item {
