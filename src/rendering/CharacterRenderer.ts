@@ -24,13 +24,12 @@ const WEAPON_STEEL_DARK = "#8a90a0";
 const WEAPON_BRONZE = "#b08d57";
 
 /**
- * Sprite facing. Today this is the four cardinal directions the top-down
- * town uses (`Position.facing` in the contract). Phase 1 (v2,
- * WDSA-v2-spec.md V2.4) extends that union with the iso diagonals "SE" |
- * "SW" | "NE" | "NW" — two drawn (SE, NE) plus two mirrored (SW off SE, NW
- * off NE), the same pattern "left" already uses off "right" below. The
- * FACINGS table is the only place that needs new entries; `drawCharacter`'s
- * signature does not change again.
+ * Sprite facing: the four cardinal directions the top-down town uses, plus
+ * the four iso diagonals added in Phase 1 (v2, WDSA-v2-spec.md V2.4) — "SE"
+ * | "SW" | "NE" | "NW". SE/NE are drawn poses; SW/NW mirror them, the same
+ * pattern "left" uses off "right" below. Nothing writes diagonals into
+ * `Position.facing` yet — the iso TownView (issue #70) maps world facings
+ * to diagonals at render time.
  */
 export type Facing = Position["facing"];
 
@@ -195,11 +194,92 @@ const drawSide: PoseFn = (ctx, gx, gy, s, cclass) => {
   if (s.hasWeapon) drawHipWeapon(ctx, gx, gy, 7); // in the visible hand
 };
 
+/** Three-quarter front, canonical facing SE (heading toward the screen's
+ *  lower-right) — "SW" reuses this mirrored. A shallower turn than
+ *  `drawSide`: the face still reads, but every symmetric feature of
+ *  `drawFront` picks up a 1-unit lean toward the leading (right, downhill)
+ *  side so the turn is legible at this resolution. */
+const drawThreeQuarterFront: PoseFn = (ctx, gx, gy, s, cclass) => {
+  px(ctx, gx + 2, gy, 6, 6, s.skin);
+  px(ctx, gx + 2, gy, 6, 2, s.hair);
+  // Trailing (left) edge shows one extra unit of hair wrap — the far side
+  // of the skull just starting to peek around as the head turns toward
+  // the leading edge (more of this at full profile in drawSide).
+  px(ctx, gx + 2, gy, 1, 6, s.hair);
+  if (s.isRogue) {
+    // Hood: wraps the trailing edge two units wide (extra wrap, as above)
+    // but stays a single unit on the leading edge, same as drawFront.
+    px(ctx, gx + 2, gy, 2, 6, s.cls.accent);
+    px(ctx, gx + 7, gy, 1, 6, s.cls.accent);
+    px(ctx, gx + 2, gy, 6, 2, s.cls.accent);
+  }
+  // Both eyes stay visible but shift 1 unit toward the leading side.
+  px(ctx, gx + 4, gy + 3, 1, 1, "#1a1a2e");
+  px(ctx, gx + 7, gy + 3, 1, 1, "#1a1a2e");
+
+  px(ctx, gx + 2, gy + 6, 6, 6, s.cls.body);
+  // Leading arm (right) fully visible; trailing arm (left) loses its
+  // inner column — partially behind the torso as the body turns.
+  px(ctx, gx, gy + 6, 1, 5, s.cls.body);
+  px(ctx, gx + 8, gy + 6, 2, 5, s.cls.body);
+  px(ctx, gx, gy + 11, 1, 1, s.skin);
+  px(ctx, gx + 8, gy + 11, 2, 1, s.skin);
+
+  if (s.isMage) {
+    px(ctx, gx + 2, gy + 12, 6, 4, s.cls.body);
+    px(ctx, gx + 2, gy + 15, 6, 1, s.cls.accent);
+  } else {
+    drawLegs(ctx, gx, gy, s.walkFrame);
+  }
+
+  drawClassAccessory(ctx, gx, gy, cclass, s.cls, -7); // trailing edge
+  if (s.hasWeapon) drawHipWeapon(ctx, gx, gy, 8); // leading hand
+};
+
+/** Three-quarter back, canonical facing NE (heading toward the screen's
+ *  upper-right) — "NW" reuses this mirrored. Mostly `drawBack`'s hair-only
+ *  head (no face from this angle), but the leading (right) shoulder reads
+ *  forward into the turn while the trailing arm recedes behind the torso,
+ *  mirroring the asymmetry `drawThreeQuarterFront` uses below the neck. */
+const drawThreeQuarterBack: PoseFn = (ctx, gx, gy, s, cclass) => {
+  px(ctx, gx + 2, gy, 6, 6, s.hair);
+  if (s.isRogue) {
+    px(ctx, gx + 2, gy, 1, 6, s.cls.accent);
+    px(ctx, gx + 7, gy, 1, 6, s.cls.accent);
+    px(ctx, gx + 2, gy, 6, 2, s.cls.accent);
+  }
+
+  px(ctx, gx + 2, gy + 6, 6, 6, s.cls.body);
+  // Trailing arm (left) narrows behind the torso; leading arm (right)
+  // stays full width so that shoulder reads as pushed forward.
+  px(ctx, gx, gy + 6, 1, 5, s.cls.body);
+  px(ctx, gx + 8, gy + 6, 2, 5, s.cls.body);
+  px(ctx, gx, gy + 11, 1, 1, s.skin);
+  px(ctx, gx + 8, gy + 11, 2, 1, s.skin);
+
+  if (s.isMage) {
+    px(ctx, gx + 2, gy + 12, 6, 4, s.cls.body);
+    px(ctx, gx + 2, gy + 15, 6, 1, s.cls.accent);
+  } else {
+    drawLegs(ctx, gx, gy, s.walkFrame);
+  }
+
+  // Accessory shifts off-center toward the trailing (left) shoulder —
+  // partway between drawBack's centered dx=0 and drawSide's full dx=-7,
+  // matching how far the body has actually turned.
+  drawClassAccessory(ctx, gx, gy, cclass, s.cls, -4);
+  if (s.hasWeapon) drawHipWeapon(ctx, gx, gy, 8); // leading hand
+};
+
 const FACINGS: Record<Facing, { draw: PoseFn; mirror: boolean }> = {
   down: { draw: drawFront, mirror: false },
   up: { draw: drawBack, mirror: false },
   right: { draw: drawSide, mirror: false },
   left: { draw: drawSide, mirror: true },
+  SE: { draw: drawThreeQuarterFront, mirror: false },
+  SW: { draw: drawThreeQuarterFront, mirror: true },
+  NE: { draw: drawThreeQuarterBack, mirror: false },
+  NW: { draw: drawThreeQuarterBack, mirror: true },
 };
 
 /**

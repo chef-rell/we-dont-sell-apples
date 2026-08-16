@@ -82,7 +82,11 @@ export interface AdventurerMemory {
 export interface Position {
   x: number; // world px
   y: number;
-  facing: "up" | "down" | "left" | "right";
+  // v2 Phase 1 (WDSA-v2-spec.md V2.4, additive): "NE" | "NW" | "SE" | "SW"
+  // are the iso diagonals CharacterRenderer now draws. Nothing writes them
+  // yet — the iso TownView (issue #70) maps world facings to diagonals at
+  // render time.
+  facing: "up" | "down" | "left" | "right" | "NE" | "NW" | "SE" | "SW";
   moving: boolean;
 }
 
