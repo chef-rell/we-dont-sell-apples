@@ -1,5 +1,7 @@
 // Game balance numbers and shared constants (spec §4, §5, §10)
 
+import type { DayPhase } from "../types";
+
 // ---------- Time (spec §4) ----------
 export const DAY_LENGTH_MS = 10 * 60 * 1000; // 10 real minutes at 1×
 export const NIGHT_SPEED_MULT = 3; // night fast-forwards 3×
@@ -57,6 +59,21 @@ export const PALETTE = {
 // Logical canvas size in world px (scaled to fit the window)
 export const WORLD_W = 960;
 export const WORLD_H = 640;
+
+// ---------- Triptych layout (spec V2.3, issue #77) ----------
+export const TIME_COLUMN_W = 90; // right panel — sun/moon column, full stage height
+export const STRIP_H = 200; // bottom adventure-strip panel; spans WORLD_W
+
+// Sky tone per phase, warmer at the edges of the day and dark at night.
+// Shared by the HUD day clock (#52) and the triptych's time column (#77) so
+// the two widgets never drift into disagreeing palettes.
+export const DAY_SKY: Record<DayPhase, string> = {
+  dawn: "#5c4a6e",
+  morning: "#5a7a9a",
+  afternoon: "#6a8aa8",
+  evening: "#463a5e",
+  night: "#141b2e",
+};
 
 // ---------- Adventurers ----------
 export const STARTING_ADVENTURER_COUNT = 6;
