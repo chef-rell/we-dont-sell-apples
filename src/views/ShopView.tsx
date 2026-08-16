@@ -13,6 +13,7 @@ import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
 import { rect } from "../rendering/PixelRenderer";
 import { drawReaction } from "../rendering/ReactionRenderer";
 import { PricingPanel } from "../ui/PricingPanel";
+import { LootOfferPanel } from "../ui/LootOfferPanel";
 import { WholesalePanel } from "../ui/WholesalePanel";
 import type { Adventurer, GameState, Item } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
@@ -46,11 +47,18 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
   // the panel when the cart packs up.
   const [shopping, setShopping] = useState(false);
   const [cartHere, setCartHere] = useState(engine.state.merchant !== null);
+  // Loot offers arrive in the evening and expire at nightfall; same treatment.
+  const [viewingOffers, setViewingOffers] = useState(false);
+  const [offerCount, setOfferCount] = useState(engine.state.lootOffers.length);
   useEffect(() => {
     const id = setInterval(() => {
       const here = engine.state.merchant !== null;
       setCartHere(here);
       if (!here) setShopping(false);
+
+      const offers = engine.state.lootOffers.length;
+      setOfferCount(offers);
+      if (offers === 0) setViewingOffers(false);
     }, 250);
     return () => clearInterval(id);
   }, [engine]);
@@ -128,27 +136,31 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
       )}
       {cartHere && (
         <button
-          onClick={() => setShopping((open) => !open)}
-          style={{
-            position: "absolute",
-            top: 12,
-            right: 12,
-            background: PALETTE.uiDark,
-            border: `2px solid ${PALETTE.gold}`,
-            color: PALETTE.gold,
-            fontFamily: "monospace",
-            fontSize: 15,
-            padding: "6px 12px",
-            cursor: "pointer",
-            zIndex: 2,
+          onClick={() => {
+            setViewingOffers(false); // one panel at a time in the corner
+            setShopping((open) => !open);
           }}
+          style={cornerButton(0)}
         >
           🛒 Restock
         </button>
       )}
-      {shopping && (
-        <div style={cartAnchor}>
-          <WholesalePanel engine={engine} onClose={() => setShopping(false)} />
+      {offerCount > 0 && (
+        <button
+          onClick={() => {
+            setShopping(false);
+            setViewingOffers((open) => !open);
+          }}
+          style={cornerButton(cartHere ? 1 : 0)}
+        >
+          💰 Offers ({offerCount})
+        </button>
+      )}
+      {(shopping || viewingOffers) && (
+        <div style={panelCorner((cartHere ? 1 : 0) + (offerCount > 0 ? 1 : 0))}>
+          {shopping ?
+            <WholesalePanel engine={engine} onClose={() => setShopping(false)} />
+          : <LootOfferPanel engine={engine} onClose={() => setViewingOffers(false)} />}
         </div>
       )}
       <button
@@ -197,13 +209,32 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-/** The restock panel hangs under its button in the top-right corner. */
-const cartAnchor: CSSProperties = {
-  position: "absolute",
-  top: 52,
-  right: 12,
-  zIndex: 2,
-};
+/** Corner buttons stack down the top-right; row 0 is the topmost. */
+function cornerButton(row: number): CSSProperties {
+  return {
+    position: "absolute",
+    top: 12 + row * 40,
+    right: 12,
+    background: PALETTE.uiDark,
+    border: `2px solid ${PALETTE.gold}`,
+    color: PALETTE.gold,
+    fontFamily: "monospace",
+    fontSize: 15,
+    padding: "6px 12px",
+    cursor: "pointer",
+    zIndex: 2,
+  };
+}
+
+/** Whichever corner panel is open hangs below the whole button stack. */
+function panelCorner(buttonCount: number): CSSProperties {
+  return {
+    position: "absolute",
+    top: 12 + buttonCount * 40 + 4,
+    right: 12,
+    zIndex: 2,
+  };
+}
 
 /**
  * Give each customer a standing spot, preferring the lane in front of the
@@ -368,9 +399,15 @@ export function renderShop(
   ctx.font = `${3 * PX}px monospace`;
   ctx.fillStyle = PALETTE.textDim;
   ctx.fillText("Day " + s.day + " · " + s.phase, WORLD_W / 2, 74);
-  // One status line under the sign: who's in the shop, or the pricing hint.
-  // (It lives up here now — the floor below the counter belongs to customers.)
-  if (customers.length > 0) {
+  // One status line under the sign, most urgent first: someone waiting to sell
+  // (their offer expires at nightfall), else who's in the shop, else the hint.
+  // (It lives up here — the floor below the counter belongs to customers.)
+  if (s.lootOffers.length > 0) {
+    const names = s.lootOffers.map((o) => o.adventurerName.split(" ")[0]);
+    const who = names.length === 1 ? names[0] : `${names.length} adventurers`;
+    ctx.fillStyle = PALETTE.gold;
+    ctx.fillText(`${who} waiting to sell you loot`, WORLD_W / 2, 96);
+  } else if (customers.length > 0) {
     ctx.fillStyle = PALETTE.gold;
     ctx.fillText(
       `${customers.length} ${customers.length === 1 ? "customer" : "customers"} in the shop`,
