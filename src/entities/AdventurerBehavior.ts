@@ -124,7 +124,14 @@ export function stepAdventurer(
         headHome(a, bc);
         break;
       }
-      if (bc.plan === "shop" && !bc.shopped && (s.phase === "dawn" || s.phase === "morning")) {
+      // Departures wait out the wake-up stagger set in beginDay(); without the
+      // timer check the stagger existed but nothing honoured it (#50).
+      if (
+        bc.plan === "shop" &&
+        !bc.shopped &&
+        bc.timer <= 0 &&
+        (s.phase === "dawn" || s.phase === "morning")
+      ) {
         a.state = "heading_to_shop";
         bc.target = TOWN.shopDoor;
         break;
@@ -134,7 +141,7 @@ export function stepAdventurer(
         bc.target = TOWN.shopDoor;
         break;
       }
-      if (bc.plan === "adventure" && !bc.adventured && s.phase === "afternoon") {
+      if (bc.plan === "adventure" && !bc.adventured && bc.timer <= 0 && s.phase === "afternoon") {
         a.state = "heading_to_gate";
         bc.target = { x: TOWN.gate.x, y: TOWN.gate.y + 30 };
         break;
@@ -155,7 +162,11 @@ export function stepAdventurer(
           y: p.y + Math.floor(Math.random() * 60) - 30,
         };
       }
-      if (walkToward(a, bc, dt)) {
+      // Only an adventurer who actually had somewhere to be has "arrived".
+      // walkToward() reports true when there is no target at all, so resetting
+      // the linger timer unconditionally re-armed it every tick and the timer
+      // never reached zero — which silently blocked the departure gates above.
+      if (bc.target && walkToward(a, bc, dt)) {
         bc.target = null;
         bc.timer = 4 + Math.random() * 8; // linger, varied
       }
@@ -347,7 +358,16 @@ function beginDay(a: Adventurer, bc: BehaviorContext, day: number): void {
   a.daysSinceLastAdventure += 1;
   a.memory.daysInTown += 1;
   a.state = "wandering";
-  bc.timer = jitterAbs(a, 8); // stagger wake-ups so the town doesn't move in lockstep
+  // Stagger the morning: without a real spread everyone wakes, walks and shops
+  // in lockstep, which reads as six copies of one adventurer (#50). Random is
+  // right here — this is ambience, not a §6 verdict.
+  //
+  // 20-60 game-seconds rather than the 5-40 sketched in the issue: the point of
+  // starting at dawn is to give the player a setup window, and a 5s floor only
+  // guarantees five seconds of it. A 20s floor leaves most of dawn free, and a
+  // 60s ceiling still puts every departure early in the morning (which runs to
+  // ~210s), so nobody misses their shop trip.
+  bc.timer = 20 + Math.random() * 40;
 }
 
 /** AI morning decision arrived (async) — adopt it if the day hasn't progressed past it. */
@@ -389,7 +409,12 @@ function leaveShop(a: Adventurer, bc: BehaviorContext): void {
   bc.shopped = true;
   bc.browsingItem = null;
   a.browsingItemId = null;
-  bc.target = { x: TOWN.square.x, y: TOWN.square.y + 20 };
+  // Scatter across the square instead of everyone converging on one pixel and
+  // standing in each other (#50).
+  bc.target = {
+    x: TOWN.square.x + Math.floor(Math.random() * 120) - 60,
+    y: TOWN.square.y + Math.floor(Math.random() * 80) - 20,
+  };
 }
 
 function completePurchase(
@@ -477,10 +502,6 @@ function walkToward(a: Adventurer, bc: BehaviorContext, dt: number): boolean {
 
 function areaName(area: "forest_edge" | "shadow_cave"): string {
   return area === "forest_edge" ? "Forest Edge" : "Shadow Cave";
-}
-
-function jitterAbs(a: Adventurer, range: number): number {
-  return (a.appearance.skin * 7 + a.appearance.hair * 13) % range;
 }
 
 let msgCounter = 0;

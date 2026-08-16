@@ -314,3 +314,70 @@ describe("shelveItem", () => {
     expect(e.state.inventory).toHaveLength(1); // untouched
   });
 });
+
+// Regression cover for #50: the town moved as one organism — everyone left for
+// the shop on the same tick and then converged on a single pixel in the square.
+describe("town movement feels like a town (#50)", () => {
+  it("opens a new game at dawn, so the player can price before the rush", () => {
+    const e = freshEngine();
+    expect(e.state.phase).toBe("dawn");
+    // The wake-up stagger has a 20s floor, so the first ~15 game-seconds are
+    // the player's: nobody has even set off for the shop yet.
+    runDays(e, 0.025); // 15 game-seconds
+    const moving = e.state.adventurers.filter(
+      (a) => a.state === "heading_to_shop" || a.state === "browsing" || a.state === "buying",
+    );
+    expect(moving).toHaveLength(0);
+  });
+
+  it("staggers shop trips instead of marching everyone off at once", () => {
+    const e = freshEngine();
+    for (const it of e.state.shelves) if (it) e.setPrice(it.id, Math.round(it.baseValue * 1.2));
+
+    // Sample how many have set off for the shop, early in the morning.
+    const departedAt: number[] = [];
+    for (let i = 0; i < 6000; i++) {
+      e.tick(100);
+      if (i % 100 === 0) {
+        departedAt.push(
+          e.state.adventurers.filter((a) => a.state !== "wandering" && a.state !== "resting").length,
+        );
+      }
+    }
+    // They should not all be in transit on the same sample.
+    const jumps = departedAt.filter((n, i) => i > 0 && n > departedAt[i - 1]);
+    expect(jumps.length).toBeGreaterThan(1);
+  });
+
+  it("still gets everyone to the shop on day 1 despite the stagger", () => {
+    const e = freshEngine();
+    for (const it of e.state.shelves) if (it) e.setPrice(it.id, Math.round(it.baseValue * 1.2));
+    const visited = new Set<string>();
+    runDays(e, 1, (eng) => {
+      for (const a of eng.state.adventurers) {
+        if (a.state === "browsing" || a.state === "buying") visited.add(a.id);
+      }
+    });
+    expect(visited.size).toBe(e.state.adventurers.length);
+  });
+
+  it("scatters adventurers leaving the shop rather than stacking them", () => {
+    const e = freshEngine();
+    for (const it of e.state.shelves) if (it) e.setPrice(it.id, Math.round(it.baseValue * 1.2));
+
+    // Measure how spread out the idlers are across the day. The bug collapsed
+    // them onto one coordinate, so the bounding box degenerated to ~0. Spread
+    // rather than pairwise uniqueness: two adventurers legitimately sharing a
+    // doorway for a tick shouldn't fail the run.
+    let widestSpread = 0;
+    runDays(e, 1, (eng) => {
+      const idle = eng.state.adventurers.filter((a) => a.alive && a.state === "wandering");
+      if (idle.length < 3) return;
+      const xs = idle.map((a) => a.position.x);
+      const ys = idle.map((a) => a.position.y);
+      const spread = Math.max(...xs) - Math.min(...xs) + (Math.max(...ys) - Math.min(...ys));
+      widestSpread = Math.max(widestSpread, spread);
+    });
+    expect(widestSpread).toBeGreaterThan(100);
+  });
+});
