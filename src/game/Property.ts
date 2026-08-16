@@ -41,9 +41,15 @@ export const CRAFT_PLOTS: Record<
   CraftBuildingKind,
   { footprint: { x: number; y: number; w: number; h: number }; door: { x: number; y: number } }
 > = {
-  garden: { footprint: { x: 20, y: 128, w: 64, h: 48 }, door: { x: 52, y: 176 } },
-  alchemy_lab: { footprint: { x: 20, y: 216, w: 64, h: 48 }, door: { x: 52, y: 264 } },
-  forge: { footprint: { x: 100, y: 216, w: 64, h: 48 }, door: { x: 132, y: 264 } },
+  // Layout rule for the fixed iso camera (found the hard way in #92's
+  // review): a TALL block drawn south (+y) of a FLAT plot rises over and
+  // hides it. So the flat garden sits in the front band with nothing tall
+  // south of it, the tall lab stands alone to the north-west, and the
+  // forge sits beside the garden — all west of the shop-door→square path
+  // (x < 152) and clear of the shop tower's footprint.
+  alchemy_lab: { footprint: { x: 20, y: 128, w: 64, h: 48 }, door: { x: 52, y: 176 } },
+  garden: { footprint: { x: 12, y: 232, w: 64, h: 48 }, door: { x: 44, y: 280 } },
+  forge: { footprint: { x: 88, y: 232, w: 64, h: 48 }, door: { x: 120, y: 280 } },
 };
 
 function countMaterial(items: Item[], defKey: string): number {
