@@ -6,6 +6,7 @@
 import type { GameState } from "../types";
 import { freshLedger } from "./Ledger";
 import { defaultBuildings } from "../utils/TownBuildings";
+import { CRAFT_PLOTS } from "./Property";
 
 // v2 fresh-start policy (spec V2.1 decision 4, V2.11): v2 reads and writes
 // ONLY this key. The old `wdsa_save_v1` key is never read, migrated, or
@@ -32,6 +33,16 @@ export function loadGame(): GameState | null {
     state.saveVersion ??= 2;
     state.reputation ??= 0;
     state.buildings ??= defaultBuildings(); // registry added in #56; old saves get today's fixed geometry
+    // Player-built plots re-anchor to the current CRAFT_PLOTS on every load
+    // — plot geometry is code-owned (the coords moved once already, in the
+    // #92-review layout fix); only the building's existence is save-owned.
+    for (const b of state.buildings) {
+      if (b.playerBuilt && b.kind in CRAFT_PLOTS) {
+        const plot = CRAFT_PLOTS[b.kind as keyof typeof CRAFT_PLOTS];
+        b.footprint = { ...plot.footprint };
+        b.door = { ...plot.door };
+      }
+    }
     state.lootOffers ??= [];
     state.recentOutcomes ??= [];
     state.merchant ??= null;
