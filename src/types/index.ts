@@ -72,6 +72,7 @@ export interface AdventurerMemory {
   bestAdventureResult: string | null;
   grudges: boolean;
   daysInTown: number;
+  lowMoraleDays: number; // consecutive days ending below 30 — drives leaving town (§14)
 }
 
 /** Pixel-grid position + movement, for rendering. Set by the behavior state machine. */

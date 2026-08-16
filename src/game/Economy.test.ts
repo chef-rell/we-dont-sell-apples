@@ -38,6 +38,7 @@ function testAdventurer(overrides: Partial<Adventurer> = {}): Adventurer {
       bestAdventureResult: null,
       grudges: false,
       daysInTown: 0,
+      lowMoraleDays: 0,
     },
     alive: true,
     daysSinceLastAdventure: 0,

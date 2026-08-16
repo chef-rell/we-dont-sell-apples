@@ -9,6 +9,7 @@ import { loadBudget } from "../utils/TokenBudget";
 import { makeItem, startingInventory } from "../entities/Item";
 import { loadGame, saveGame } from "./GameStatePersistence";
 import { elapsedOfflineDays, runOfflineSim } from "./OfflineSim";
+import { arrivalBonus, processDayEnd } from "./MoraleSystem";
 import { makeDecision, type MorningPlanDecision } from "../entities/AdventurerAI";
 import {
   TOWN,
@@ -127,6 +128,17 @@ export class GameEngine {
     saveGame(s); // auto-save at the day rollover (§12)
     // Loot offers don't survive the night.
     s.lootOffers = s.lootOffers.filter((o) => o.day >= s.day);
+
+    // Social pass (§14): morale drift, departures, reputation spread.
+    const social = processDayEnd(s);
+    for (const m of social.messages) this.pushMessage(m);
+    if (social.departed.length > 0 && this.replacementDueDay === null) {
+      this.replacementDueDay = s.day + REPLACEMENT_DAYS_MIN;
+    }
+    // A well-regarded shop attracts newcomers sooner (§14).
+    if (this.replacementDueDay !== null) {
+      this.replacementDueDay -= arrivalBonus(social.reputation);
+    }
 
     // Replacement arrivals (§7): due date passed, or town below minimum.
     const aliveCount = s.adventurers.filter((a) => a.alive).length;
@@ -444,6 +456,7 @@ function buildAdventurers(
       bestAdventureResult: null,
       grudges: c.traits.includes("picky"),
       daysInTown: 0,
+      lowMoraleDays: 0,
     },
     alive: true,
     daysSinceLastAdventure: 0,
