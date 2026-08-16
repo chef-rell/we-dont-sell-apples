@@ -507,8 +507,10 @@ function createInitialState(): GameState {
 
   return {
     day: 1,
-    timeOfDay: 0.1,
-    phase: "morning",
+    // Open at dawn, not straight into the morning rush: §4 gives dawn to the
+    // player to price the shelves before the first customer moves (#50).
+    timeOfDay: 0.02,
+    phase: "dawn",
     speed: 1,
     view: "town",
     gold: STARTING_GOLD,
