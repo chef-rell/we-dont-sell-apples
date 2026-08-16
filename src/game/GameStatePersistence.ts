@@ -50,12 +50,16 @@ export function loadGame(): GameState | null {
     state.ledger ??= freshLedger(state.day);
     state.ledgerHistory ??= [];
     state.lastSalePriceByName ??= {};
-    // Durability forward-compat: items in all collections get defaults.
+    // Durability/rarity forward-compat: items in all collections get
+    // defaults. rarity/enchantments/origin added spec V2.9, issue #90.
     const patchItem = (it: any) => {
       if (!it) return;
       it.durability ??= null;
       it.maxDurability ??= null;
       it.timesRepaired ??= 0;
+      it.rarity ??= "common";
+      it.enchantments ??= [];
+      it.origin ??= "stock";
     };
     for (const it of state.inventory) patchItem(it);
     for (const it of state.shelves) patchItem(it);
@@ -68,6 +72,17 @@ export function loadGame(): GameState | null {
     }
     for (const o of state.recentOutcomes) o.brokenItems ??= [];
     for (const lo of state.lootOffers) patchItem(lo.item);
+    // lootRolls forward-compat (spec V2.9, issue #90): old outcomes never
+    // rolled rarity, so back-fill a shape-consistent common-rarity mapping
+    // of lootItemKeys — AdventurerBehavior.ts's materialization loop reads
+    // lootRolls unconditionally, so a mid-script resumed save (currentScript
+    // persists through a save, per its own field doc) needs this patched on
+    // memberOutcomes too, not just recentOutcomes.
+    const patchOutcome = (o: any) => {
+      o.lootRolls ??= (o.lootItemKeys ?? []).map((key: string) => ({ key, rarity: "common", enchantments: [] }));
+    };
+    for (const o of state.recentOutcomes) patchOutcome(o);
+    if (state.currentScript) for (const o of state.currentScript.memberOutcomes) patchOutcome(o);
     state.speed = 1; // never resume paused or fast-forwarded
     state.view = "town";
     return state;

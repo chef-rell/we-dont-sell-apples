@@ -61,6 +61,9 @@ function item(salePrice: number | null, baseValue = 100, quality = 5): Item {
     durability: null,
     maxDurability: null,
     timesRepaired: 0,
+    rarity: "common",
+    enchantments: [],
+    origin: "stock",
   };
 }
 

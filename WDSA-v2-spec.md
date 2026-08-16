@@ -410,3 +410,47 @@ into. Judgment calls, since V2.7 leaves them implicit:
 4. Helper XP/level are a single track-agnostic curve (0/30/80/160/280);
    `track` only gates the trait multiplier and the permanent unlock, not a
    separate per-track level.
+
+**2026-08-16 — Phase 4a: item rarity, enchantments, repair math** (issue #90,
+`entities/Item.ts` rarity/enchant math + loot rolls, `game/Combat.ts` enchant
+combat effects, new `game/Forge.ts` pure repair functions). Engine only —
+forge service wiring, crafting recipes, and rendering (rarity color/sparkle,
+enchant icons) are later phases. Judgment calls the issue's numbers left
+implicit:
+
+1. **Rarity-shift redistribution.** "shifting 5% out of common per 5 days"
+   doesn't say where the shifted weight goes. Implemented as proportional
+   redistribution across uncommon/rare/legendary, preserving their day-0
+   30:9:1 ratio as the floor (25% common) is approached — see
+   `rarityWeightsForDay()` in `entities/Item.ts`.
+2. **Loot-roll scope.** Rarity/enchantment rolls are implemented ONLY inside
+   `generateAdventureScript` (the issue's stated location), using its seeded
+   rng exclusively. v1's `resolveAdventure()` fallback path (stragglers,
+   night-run resolution) still returns `lootRolls` shaped as common-rarity/
+   no-enchant entries for type consistency, but never varies them — a
+   deliberately scoped gap, not an oversight, since that path is now a minor
+   fallback rather than the primary v2 combat surface.
+3. **Enchant combat-effect placement**, all local to `generateAdventureScript`'s
+   per-encounter loop (never touches the shared `combatPower()`/
+   `resolveAdventure()` v1 math): the generic `+3 power`/enchant and flame's
+   extra `+2` are added to that encounter's power AFTER `partyPower()`'s
+   diversity multiplier; warding's `+2` stacks directly onto armor-quality
+   mitigation; lifesteal's `+3` heal-per-win reduces the cumulative damage
+   tracker (capped at the member's effective max); vigor's `+5 maxHp` is
+   added to the member's starting HP pool for the whole script (their real
+   `a.hp`/`a.maxHp` stats are never touched — it's a per-trip buffer only).
+4. **`prefersRepair`'s 45% ceiling.** With `repairCost` fixed at exactly 35%
+   of an item's baseValue and "replacement value" read as that same
+   baseValue, the 45%-of-replacement check is always true under today's
+   numbers (0.35 < 0.45) — computed generically rather than hardcoded so it
+   keeps working if either ratio is tuned independently later; not a live
+   gate yet.
+5. **Loot rarity applies to any dropped item key, not just weapon/armor.**
+   Most monster loot tables are `"loot"`-category crafting materials, not
+   equippable gear — rarity/enchant rolls apply uniformly regardless of
+   category (a "legendary" crude hide is just a higher-value curio; only
+   equipped weapon/armor/accessory slots read enchantments for combat
+   effects, so a material item's enchantment roll is inert flavor value).
+   Balance-guardrail 7-day report (`scripts/balance-report.ts 7`) held: every
+   band's adventurer gold and items-sold stayed within ±25% of pre-#90 main;
+   no drop-rate tuning was needed.

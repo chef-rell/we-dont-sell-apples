@@ -20,6 +20,24 @@ export type ItemCategory =
   | "consumable"
   | "loot";
 
+// ---------- Rarity, enchantments, origin (spec V2.9, issue #90) ----------
+
+/** Forge ceiling is "uncommon" — rare/legendary are adventure-exclusive
+ *  (spec V2.9). The ONLY place rarity touches the §6 economy is baseValue,
+ *  computed once at item creation by `applyRarity()` in `entities/Item.ts`;
+ *  `Economy.ts`'s verdict functions and REACTION_BANDS never change. */
+export type ItemRarity = "common" | "uncommon" | "rare" | "legendary";
+
+/** Drop on loot only (never forged/stock). Combat effects while equipped are
+ *  documented at each application site in `game/Combat.ts`'s
+ *  generateAdventureScript. */
+export type Enchantment = "flame" | "lifesteal" | "warding" | "vigor";
+
+/** Where an item came from — drives the durability split (spec V2.9):
+ *  loot maxDurability ×0.7 (hits harder, breaks sooner), forged ×1.3
+ *  (bread-and-butter), stock (today's shop/wholesale items) unchanged. */
+export type ItemOrigin = "stock" | "loot" | "forged";
+
 export interface Item {
   id: string; // UUID (spec §19: globally unique for multiplayer future)
   name: string;
@@ -31,6 +49,10 @@ export interface Item {
   durability: number | null;    // null = non-gear (consumable/loot); 0 = broken
   maxDurability: number | null;
   timesRepaired: number;        // for future blacksmith; starts 0
+  // ---- spec V2.9 / issue #90 (additive) ----
+  rarity: ItemRarity; // ??= "common" on load (GameStatePersistence.patchItem)
+  enchantments: Enchantment[]; // ??= []
+  origin: ItemOrigin; // ??= "stock"
 }
 
 // ---------- Adventurers ----------
@@ -137,6 +159,17 @@ export type WildernessArea = "forest_edge" | "shadow_cave";
 
 // ---------- Adventures & loot (spec §8) ----------
 
+/** Rolled rarity/enchantments for one loot drop (spec V2.9, issue #90).
+ *  `key` matches the corresponding entry in `AdventureOutcome.lootItemKeys`
+ *  (same index, same order) — kept as a separate parallel array rather than
+ *  replacing `lootItemKeys` so every existing reader of that field (loot
+ *  count/narration, `AdventureStripRenderer`) stays untouched. */
+export interface LootRoll {
+  key: string; // ITEM_DEFS key
+  rarity: ItemRarity;
+  enchantments: Enchantment[];
+}
+
 /** Deterministic combat outcome — computed by stats BEFORE any AI narration.
  *  The Wilderness View animates this; the AI describes it; neither alters it. */
 export interface AdventureOutcome {
@@ -151,6 +184,13 @@ export interface AdventureOutcome {
   goldFound: number; // coin injected by the wilderness (the economy's faucet)
   narration: string | null; // AI text, arrives async; null until then/fallback
   brokenItems: string[];  // names of gear that broke during this adventure
+  /** spec V2.9/issue #90 (additive): rarity/enchantments rolled for each
+   *  lootItemKeys entry, same order. Only `generateAdventureScript` rolls
+   *  rarity (seeded rng, see Combat.ts); v1's resolveAdventure() fallback
+   *  (stragglers/night runs) fills this with common-rarity, no-enchant
+   *  entries — same shape, unrolled — a documented scope choice (issue #90
+   *  PR body). ??= a common-rarity mapping of lootItemKeys on load. */
+  lootRolls: LootRoll[];
 }
 
 // ---------- Adventure scripts (spec V2.5/V2.6, issue #76) ----------
@@ -190,6 +230,14 @@ export interface AdventureScriptEvent {
   monster?: string; // monster name, for encounter/death/hit-shaped events
   itemName?: string; // for gearBreak/lootDrop
   value?: number; // damage/gold amount, event-dependent
+  /** spec V2.9/issue #90 (additive): set alongside `itemName` on `lootDrop`
+   *  and `helperCarry` events carrying loot — GameEngine's full-wipe carry
+   *  path (`resolveHelperWipeCarry`) reads these to materialize the item
+   *  with the SAME roll `generateAdventureScript` made, since that path
+   *  only has the events to work from (no memberOutcome survives a wipe to
+   *  read `lootRolls` off). Undefined on every other event type. */
+  itemRarity?: ItemRarity;
+  itemEnchantments?: Enchantment[];
 }
 
 export interface AdventureScript {

@@ -1,6 +1,6 @@
 // Game balance numbers and shared constants (spec §4, §5, §10)
 
-import type { DayPhase } from "../types";
+import type { DayPhase, ItemOrigin, ItemRarity } from "../types";
 
 // ---------- Time (spec §4) ----------
 export const DAY_LENGTH_MS = 10 * 60 * 1000; // 10 real minutes at 1×
@@ -90,3 +90,57 @@ export const BASE_DURABILITY = 20;
 export const DURABILITY_QUALITY_SCALE = 5; // maxDurability = BASE + quality * SCALE
 export const DURABILITY_LOSS_MIN = 1;
 export const DURABILITY_LOSS_MAX = 3;
+
+// ---------- Rarity, enchantments, repair (spec V2.9, issue #90) ----------
+
+// baseValue carries rarity — the §6 rule (CLAUDE.md rule 1 / v2 spec V2.9):
+// these multipliers are the ONLY place rarity touches the economy.
+// Economy.ts's verdict functions and REACTION_BANDS are never touched by
+// rarity/enchantments — a legendary at 10x a forged item's price still
+// reads as "fair" because baseValue itself carries the multiplier.
+export const RARITY_VALUE_MULT: Record<ItemRarity, number> = {
+  common: 1,
+  uncommon: 1.6,
+  rare: 2.8,
+  legendary: 5,
+} as const;
+export const ENCHANTMENT_VALUE_BONUS = 0.25; // +25% baseValue per enchantment (additive, stacks)
+
+// Loot-roll rarity distribution (issue #90): common 60/uncommon 30/rare 9/
+// legendary 1 (%) at day 0, shifting 5% out of common per 5 days elapsed,
+// floored at 25% common. The shifted weight is redistributed proportionally
+// across uncommon/rare/legendary (their day-0 ratio 30:9:1 is preserved as
+// the game ages) — see `rarityWeightsForDay()` in entities/Item.ts.
+export const LOOT_RARITY_BASE_WEIGHTS: Record<ItemRarity, number> = {
+  common: 60,
+  uncommon: 30,
+  rare: 9,
+  legendary: 1,
+} as const;
+export const LOOT_RARITY_COMMON_FLOOR = 25;
+export const LOOT_RARITY_SHIFT_PER_5_DAYS = 5;
+
+// Enchantment roll chances by rarity (loot only — forge ceiling is
+// uncommon, and enchantments never drop on forge-tier gear). "rare: 70% +
+// 20% second" and "legendary: always one + 60% second" are nested — the
+// second roll only fires once the first has (see rollLootEnchantments).
+export const ENCHANT_ROLL_CHANCE = {
+  uncommon: { first: 0.4 },
+  rare: { first: 0.7, second: 0.2 },
+  legendary: { first: 1, second: 0.6 },
+} as const;
+
+// Durability split by origin (spec V2.9): loot gear hits harder but breaks
+// sooner; forged gear is the reliable daily-run workhorse. "stock" (today's
+// shop/wholesale items) is unchanged — ×1.
+export const DURABILITY_ORIGIN_MULT: Record<ItemOrigin, number> = {
+  stock: 1,
+  loot: 0.7,
+  forged: 1.3,
+} as const;
+
+// Repair math (src/game/Forge.ts, issue #90; engine wiring deferred to 4b).
+export const REPAIR_COST_RATIO = 0.35; // repairCost = round(this * current baseValue)
+export const REPAIR_MAX_TIMES = 3; // timesRepaired must stay < this to repair again
+export const REPAIR_DURABILITY_DECAY = 0.15; // each repair shrinks maxDurability by this fraction
+export const PREFERS_REPAIR_REPLACEMENT_RATIO = 0.45; // repair iff cost < this * replacement value

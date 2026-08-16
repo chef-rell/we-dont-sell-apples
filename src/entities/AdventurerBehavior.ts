@@ -286,9 +286,11 @@ export function stepAdventurer(
         }
 
         a.gold += outcome.goldFound;
-        // Loot into inventory; remember what's for sale.
-        for (const key of outcome.lootItemKeys) {
-          const item = makeItem(key);
+        // Loot into inventory; remember what's for sale. Materialized with
+        // the rarity/enchantments rolled at script generation (spec V2.9,
+        // issue #90) — origin "loot" (durability ×0.7, spec V2.9 split).
+        for (const roll of outcome.lootRolls) {
+          const item = makeItem(roll.key, { rarity: roll.rarity, enchantments: roll.enchantments, origin: "loot" });
           a.inventory.push(item);
           bc.lootToSell.push(item.id);
         }

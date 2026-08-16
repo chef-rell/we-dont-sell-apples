@@ -54,6 +54,9 @@ describe("auto-pilot inference", () => {
       durability: null,
       maxDurability: null,
       timesRepaired: 0,
+      rarity: "common",
+      enchantments: [],
+      origin: "stock",
     });
     expect(price).toBe(150); // overall = 1.5
   });

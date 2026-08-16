@@ -6,7 +6,7 @@ import { GameEngine } from "./GameEngine";
 import { resolveAdventure, generateAdventureScript } from "./Combat";
 import { makeItem } from "../entities/Item";
 import { makeRng } from "../utils/rng";
-import type { Adventurer } from "../types";
+import type { Adventurer, Enchantment } from "../types";
 
 /** A fresh adventurer with known gear, built without touching localStorage
  *  (resume=false skips loadGame entirely — see GameEngine constructor).
@@ -345,5 +345,198 @@ describe("generateAdventureScript full-wipe helper-carry beat", () => {
     }
     expect(sawWipeWithHelper).toBe(true);
     expect(sawWipeWithoutHelper).toBe(true);
+  });
+});
+
+// ---------- Rarity/enchantment loot rolls (spec V2.9, issue #90) ----------
+
+describe("generateAdventureScript loot rarity/enchantment determinism", () => {
+  it("same seed on identically-constructed parties yields identical lootRolls (rarity + enchantments)", () => {
+    // Force wins so loot actually drops: overwhelming power vs a weak day-1 lineup.
+    const strongParty = () =>
+      partyFixture(4).map((a) => {
+        a.level = 10;
+        a.hp = 500;
+        a.maxHp = 500;
+        return a;
+      });
+    const script1 = generateAdventureScript(strongParty(), 5, { seed: 555 }, makeRng(555));
+    const script2 = generateAdventureScript(strongParty(), 5, { seed: 555 }, makeRng(555));
+    expect(script1.memberOutcomes.map((o) => o.lootRolls)).toEqual(
+      script2.memberOutcomes.map((o) => o.lootRolls),
+    );
+    // The existing full-script determinism test (`script1 toEqual script2`)
+    // already deep-equals every field including lootRolls/itemRarity/
+    // itemEnchantments on events — this test just makes that coverage explicit.
+    expect(script1).toEqual(script2);
+  });
+
+  it("lootItemKeys and lootRolls always stay in sync — same length, same keys, same order", () => {
+    const strongParty = () =>
+      partyFixture(3).map((a) => {
+        a.level = 10;
+        a.hp = 500;
+        a.maxHp = 500;
+        return a;
+      });
+    for (let seed = 0; seed < 30; seed++) {
+      const script = generateAdventureScript(strongParty(), 10, { seed }, makeRng(seed));
+      for (const o of script.memberOutcomes) {
+        expect(o.lootRolls.map((r) => r.key)).toEqual(o.lootItemKeys);
+        for (const roll of o.lootRolls) {
+          expect(["common", "uncommon", "rare", "legendary"]).toContain(roll.rarity);
+        }
+      }
+    }
+  });
+
+  it("rolls a spread of rarities (not always common) across many seeds — fixed-seed loop, wide tolerance", () => {
+    const strongParty = () =>
+      partyFixture(2).map((a) => {
+        a.level = 10;
+        a.hp = 500;
+        a.maxHp = 500;
+        return a;
+      });
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 200; seed++) {
+      const script = generateAdventureScript(strongParty(), 40, { seed }, makeRng(seed)); // day 40: floor shift maxed out
+      for (const o of script.memberOutcomes) {
+        for (const roll of o.lootRolls) seen.add(roll.rarity);
+      }
+    }
+    expect(seen.has("common")).toBe(true);
+    expect(seen.has("uncommon")).toBe(true);
+    // rare/legendary are individually rare — assert at least one non-common,
+    // non-uncommon roll showed up over 200 seeds rather than pinning which.
+    expect(seen.has("rare") || seen.has("legendary")).toBe(true);
+  });
+});
+
+// ---------- Enchantment combat effects (spec V2.9, issue #90) ----------
+//
+// Style note: rather than single fragile seed-searches, these lean on the
+// same statistical "helped >= unaided" comparisons the #83 helper-power
+// tests above already established for this file — proven non-flaky in this
+// codebase (CLAUDE.md: "we have killed three flaky tests already").
+// Where a same-seed pairwise comparison IS safe (warding/lifesteal, below),
+// hp is set very high so neither twin dies mid-script and the two runs stay
+// in perfect rng lockstep for a direct per-seed comparison.
+
+/** A marginal, unarmed party — small enough that a flat combat bonus
+ *  meaningfully moves the win/survival rate (mirrors the helper tests'
+ *  `marginalParty` fixture above). */
+function marginalParty(n: number): Adventurer[] {
+  return partyFixture(n).map((a) => {
+    a.level = 1;
+    a.equipment = {};
+    return a;
+  });
+}
+
+/** Equips `enchantment` on a fresh ring accessory for every party member —
+ *  a slot none of the marginal-party setups above otherwise use, so this
+ *  is the only variable changed between an enchanted trial and its twin. */
+function withEnchant(party: Adventurer[], enchantment: Enchantment): Adventurer[] {
+  for (const a of party) {
+    a.equipment.accessory = makeItem("simple_ring", { enchantments: [enchantment] });
+  }
+  return party;
+}
+
+describe("generateAdventureScript enchant power bonus (+3/enchant, +2 more for flame)", () => {
+  it("an equipped enchantment wins at least as often as the same marginal party unenchanted", () => {
+    let plainWins = 0;
+    let enchantedWins = 0;
+    const trials = 100;
+    for (let seed = 0; seed < trials; seed++) {
+      const plain = generateAdventureScript(marginalParty(2), 5, { seed }, makeRng(seed));
+      const enchanted = generateAdventureScript(withEnchant(marginalParty(2), "flame"), 5, { seed }, makeRng(seed));
+      if (plain.memberOutcomes.some((o) => o.survived)) plainWins++;
+      if (enchanted.memberOutcomes.some((o) => o.survived)) enchantedWins++;
+    }
+    expect(enchantedWins).toBeGreaterThanOrEqual(plainWins);
+  });
+
+  it("flame's extra +2 gives it at least as high a win rate as a same-count non-flame enchant", () => {
+    let wardingWins = 0;
+    let flameWins = 0;
+    const trials = 100;
+    for (let seed = 0; seed < trials; seed++) {
+      const warding = generateAdventureScript(withEnchant(marginalParty(2), "warding"), 5, { seed }, makeRng(seed));
+      const flame = generateAdventureScript(withEnchant(marginalParty(2), "flame"), 5, { seed }, makeRng(seed));
+      if (warding.memberOutcomes.some((o) => o.survived)) wardingWins++;
+      if (flame.memberOutcomes.some((o) => o.survived)) flameWins++;
+    }
+    expect(flameWins).toBeGreaterThanOrEqual(wardingWins);
+  });
+});
+
+describe("generateAdventureScript warding mitigation (+2 damage reduction)", () => {
+  it("a warding-equipped member never takes MORE cumulative damage than the same unenchanted twin, same seed", () => {
+    let anyStrictlyLess = false;
+    for (let seed = 0; seed < 25; seed++) {
+      const plain = partyFixture(1).map((a) => {
+        a.hp = 100_000;
+        a.maxHp = 100_000; // never dies mid-script — keeps both twins in rng lockstep
+        return a;
+      });
+      const warded = structuredClone(plain);
+      warded[0].equipment.accessory = makeItem("simple_ring", { enchantments: ["warding"] });
+      const scriptPlain = generateAdventureScript(plain, 15, { seed }, makeRng(seed));
+      const scriptWarded = generateAdventureScript(warded, 15, { seed }, makeRng(seed));
+      const dmgPlain = scriptPlain.memberOutcomes[0].damageTaken;
+      const dmgWarded = scriptWarded.memberOutcomes[0].damageTaken;
+      expect(dmgWarded).toBeLessThanOrEqual(dmgPlain);
+      if (dmgWarded < dmgPlain) anyStrictlyLess = true;
+    }
+    expect(anyStrictlyLess).toBe(true);
+  });
+});
+
+describe("generateAdventureScript lifesteal healing (3 per won encounter)", () => {
+  it("a lifesteal-equipped member never ends with MORE cumulative damage than the same unenchanted twin, same seed", () => {
+    let anyStrictlyLess = false;
+    for (let seed = 0; seed < 25; seed++) {
+      const plain = partyFixture(1).map((a) => {
+        a.level = 8; // wins often enough for lifesteal's "per WON encounter" heal to matter
+        a.hp = 100_000;
+        a.maxHp = 100_000;
+        return a;
+      });
+      const lifesteal = structuredClone(plain);
+      lifesteal[0].equipment.accessory = makeItem("simple_ring", { enchantments: ["lifesteal"] });
+      const scriptPlain = generateAdventureScript(plain, 15, { seed }, makeRng(seed));
+      const scriptLifesteal = generateAdventureScript(lifesteal, 15, { seed }, makeRng(seed));
+      const dmgPlain = scriptPlain.memberOutcomes[0].damageTaken;
+      const dmgLifesteal = scriptLifesteal.memberOutcomes[0].damageTaken;
+      expect(dmgLifesteal).toBeLessThanOrEqual(dmgPlain);
+      if (dmgLifesteal < dmgPlain) anyStrictlyLess = true;
+    }
+    expect(anyStrictlyLess).toBe(true);
+  });
+});
+
+describe("generateAdventureScript vigor HP buffer (+5 maxHp while equipped)", () => {
+  it("a vigor-equipped member survives an otherwise-lethal script at least as often as the same fragile twin unenchanted", () => {
+    const fragile = () =>
+      partyFixture(1).map((a) => {
+        a.level = 1;
+        a.hp = 5;
+        a.maxHp = 5;
+        a.equipment = {};
+        return a;
+      });
+    let plainSurvivals = 0;
+    let vigorSurvivals = 0;
+    const trials = 150;
+    for (let seed = 0; seed < trials; seed++) {
+      const plainScript = generateAdventureScript(fragile(), 1, { seed }, makeRng(seed));
+      const vigorScript = generateAdventureScript(withEnchant(fragile(), "vigor"), 1, { seed }, makeRng(seed));
+      if (plainScript.memberOutcomes[0].survived) plainSurvivals++;
+      if (vigorScript.memberOutcomes[0].survived) vigorSurvivals++;
+    }
+    expect(vigorSurvivals).toBeGreaterThanOrEqual(plainSurvivals);
+    expect(vigorSurvivals).toBeGreaterThan(plainSurvivals); // the buffer should flip at least one seed over 150 trials
   });
 });
