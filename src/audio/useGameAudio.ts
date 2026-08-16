@@ -12,7 +12,7 @@ interface AudioWatch {
   gold: number;
   itemsSold: number;
   adventurersLost: number;
-  outcomes: number;
+  lastOutcome: string | null;
   inShop: number;
   phase: string;
   view: GameView;
@@ -21,11 +21,14 @@ interface AudioWatch {
 
 function read(engine: GameEngine): AudioWatch {
   const s = engine.state;
+  const latest = s.recentOutcomes.at(-1);
   return {
     gold: s.gold,
     itemsSold: s.stats.itemsSold,
     adventurersLost: s.stats.adventurersLost,
-    outcomes: s.recentOutcomes.length,
+    // Identify the newest adventure rather than counting them: the engine caps
+    // recentOutcomes, so a length comparison goes quiet once it is full.
+    lastOutcome: latest ? `${latest.adventurerId}-${latest.day}-${latest.monsterName}` : null,
     inShop: s.adventurers.filter((a) => a.alive && a.state === "browsing").length,
     phase: s.phase,
     view: s.view,
@@ -53,6 +56,11 @@ export function useGameAudio(engine: GameEngine): void {
   }, []);
 
   useEffect(() => {
+    // Re-baseline on the engine we're actually watching. Restarting the game
+    // swaps in a fresh engine while this hook stays mounted, and comparing the
+    // new run against the old one's numbers would fire cues for nothing.
+    prev.current = read(engine);
+
     const id = setInterval(() => {
       const now = read(engine);
       const was = prev.current;
@@ -63,7 +71,9 @@ export function useGameAudio(engine: GameEngine): void {
       if (now.itemsSold > was.itemsSold) sound.play("happy");
       if (now.inShop > was.inShop) sound.play("door");
       if (now.adventurersLost > was.adventurersLost) sound.play("angry");
-      else if (now.outcomes > was.outcomes) sound.play("monsterDeath");
+      else if (now.lastOutcome !== was.lastOutcome && now.lastOutcome !== null) {
+        sound.play("monsterDeath");
+      }
       if (now.shopLevel > was.shopLevel) sound.play("levelUp");
       if (now.phase === "night" && was.phase !== "night") sound.play("dayTransition");
       if (now.view === "gameover" && was.view !== "gameover") {
