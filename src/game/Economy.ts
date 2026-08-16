@@ -38,7 +38,8 @@ export function toleranceShift(a: Adventurer, item: Item): number {
   return clamp(shift, -REACTION_SHIFT_MAX, REACTION_SHIFT_MAX);
 }
 
-function equippedQuality(a: Adventurer, item: Item): number {
+/** Quality of the gear currently in the slot this item would fill. */
+export function equippedQuality(a: Adventurer, item: Item): number {
   const slot =
     item.category === "weapon" ? a.equipment.weapon
     : item.category === "armor" ? a.equipment.armor
