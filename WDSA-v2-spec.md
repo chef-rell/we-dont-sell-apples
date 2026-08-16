@@ -291,6 +291,16 @@ plus #65, a test-determinism fix). Build notes for later phases:
    movement), and the equipped weapon renders as one uniform blade regardless
    of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
 
+**2026-08-16 — Phase 2 complete, tagged `v2.2-triptych`** (issues #76
+AdventureScript + parties, #77 triptych layout + time column, #78 adventure
+strip — PRs #80, #79, #81). Balance guardrail held: +18% gold vs pre-party
+baseline (within ±25%), no dominant markup strategy, wipe stabilizer
+delivering multi-newcomer waves. Deviations already logged by the #78 and
+#70 entries below/above; additional note: `GameView` dropped `"wilderness"`
+(non-additive but save-safe — loadGame forces view to "town"), and
+night-raid strip playback is deferred to Phase 5 with night-script
+persistence.
+
 **2026-08-16 — Phase 1 complete, tagged `v2.1-iso-town`** (issues #69 iso
 diagonal facings, #70 iso town view, #71 `wdsa_save_v2` key switch — PRs
 #72, #74, #73). The legacy `TOWN` shim is deleted (note 2 resolved);
