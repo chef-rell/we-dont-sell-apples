@@ -9,11 +9,20 @@ import { makeRng } from "../utils/rng";
 import type { Adventurer } from "../types";
 
 /** A fresh adventurer with known gear, built without touching localStorage
- *  (resume=false skips loadGame entirely — see GameEngine constructor). */
+ *  (resume=false skips loadGame entirely — see GameEngine constructor).
+ *  Every field resolveAdventure reads is pinned: adventurer generation is
+ *  Math.random-based, and an unpinned fixture let two seeds collide into
+ *  identical outcomes (~1-in-40 flake) when rounding clamps lined up. */
 function adventurerFixture(): Adventurer {
   const a = new GameEngine(false).state.adventurers[0];
+  a.level = 2;
+  a.hp = 80;
+  a.personality.riskTolerance = 50;
+  a.appearance.skin = 2;
+  a.appearance.hair = 3;
   a.equipment.weapon = makeItem("iron_sword");
   a.equipment.armor = makeItem("leather_armor");
+  a.equipment.accessory = undefined;
   return a;
 }
 
