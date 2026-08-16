@@ -8,10 +8,11 @@
 // Read-only: it renders state.timeOfDay and nothing else.
 
 import { useEffect, useRef, useState } from "react";
+import { dayProgress, isNightSky } from "../game/DayNightCycle";
 import type { GameEngine } from "../game/GameEngine";
 import { rect } from "../rendering/PixelRenderer";
 import type { DayPhase } from "../types";
-import { PALETTE, PHASE_BOUNDS, PX } from "../utils/constants";
+import { DAY_SKY, PALETTE, PHASE_BOUNDS, PX } from "../utils/constants";
 
 // Widget geometry, on the 4px grid like everything else. Drawn and displayed
 // at 1:1 so the pixels stay crisp — downscaling pixel art by half muddies it.
@@ -21,15 +22,6 @@ const HORIZON = 24; // ground line
 const ARC_TOP = 6; // highest the disc climbs
 const EDGE = 12; // inset so the disc never clips at dawn/midnight
 const DISC = 4; // disc half-size
-
-// Sky behind the disc, per phase. Warmer at the edges of the day, dark at night.
-const SKY: Record<DayPhase, string> = {
-  dawn: "#5c4a6e",
-  morning: "#5a7a9a",
-  afternoon: "#6a8aa8",
-  evening: "#463a5e",
-  night: "#141b2e",
-};
 
 export function DayClock({ engine }: { engine: GameEngine }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -60,10 +52,10 @@ export function DayClock({ engine }: { engine: GameEngine }) {
 }
 
 function drawClock(ctx: CanvasRenderingContext2D, timeOfDay: number, phase: DayPhase) {
-  const t = Math.max(0, Math.min(1, timeOfDay));
+  const t = dayProgress(timeOfDay);
 
   // ---- Sky and ground ----
-  rect(ctx, 0, 0, W, H, SKY[phase]);
+  rect(ctx, 0, 0, W, H, DAY_SKY[phase]);
   rect(ctx, 0, HORIZON, W, H - HORIZON, "#2c1f18");
   rect(ctx, 0, HORIZON, W, PX, PALETTE.wood[0]);
 
@@ -96,7 +88,7 @@ function drawClock(ctx: CanvasRenderingContext2D, timeOfDay: number, phase: DayP
   // ---- Sun or moon, arcing across the day ----
   const x = EDGE + t * (W - EDGE * 2);
   const y = HORIZON - Math.sin(Math.PI * t) * (HORIZON - ARC_TOP);
-  if (phase === "evening" || phase === "night") drawMoon(ctx, x, y);
+  if (isNightSky(phase)) drawMoon(ctx, x, y);
   else drawSun(ctx, x, y);
 }
 

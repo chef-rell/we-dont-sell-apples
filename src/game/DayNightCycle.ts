@@ -10,6 +10,20 @@ export function phaseFor(timeOfDay: number): DayPhase {
   return "night";
 }
 
+/** Progress through the day, clamped to [0, 1] — the shared "where along the
+ *  day is it" input every clock-style widget (the HUD day clock, the
+ *  triptych's time column, issue #77) positions its sun/moon marker from. */
+export function dayProgress(timeOfDay: number): number {
+  return Math.max(0, Math.min(1, timeOfDay));
+}
+
+/** True once the moon should be shown instead of the sun. Shared so widgets
+ *  agree on exactly when night falls rather than each re-deriving it from
+ *  the phase boundaries. */
+export function isNightSky(phase: DayPhase): boolean {
+  return phase === "evening" || phase === "night";
+}
+
 /**
  * Advance timeOfDay by a real-time delta at the given speed.
  * Night fast-forwards at 3× (spec §4). Returns new timeOfDay; a value
