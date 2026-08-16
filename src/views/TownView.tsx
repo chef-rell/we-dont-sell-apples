@@ -33,20 +33,24 @@ const IN_TOWN: AdventurerState[] = [
 export function TownView({
   engine,
   onEnterShop,
-  onEnterWilderness,
 }: {
   engine: GameEngine;
   onEnterShop: () => void;
-  onEnterWilderness: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Clicking the shop building enters the Shop View; clicking the east gate
-  // follows the adventurers out to the Wilderness View. The canvas is CSS-
-  // scaled to fit the window but its internal resolution is still the
-  // WORLD_W x WORLD_H screen-projection space iso.ts draws into, so a CSS
-  // click maps 1:1 onto (sx, sy) — unproject() then turns that into world
-  // coords for the existing building-registry hit test.
+  // Clicking the shop building enters the Shop View. The east gate used to
+  // route to the Wilderness View; that screen is retired as of issue #78 —
+  // the adventure strip panel is always visible and plays the day's
+  // AdventureScript itself, so there is nowhere left to send a gate click.
+  // The gate stays registered as `clickable: true` in the building registry
+  // (src/utils/TownBuildings.ts) rather than being flipped off, since a
+  // future phase (night-raid tavern beat, spec V2.15) may give it a job
+  // again — for now it's just inert. The canvas is CSS-scaled to fit the
+  // window but its internal resolution is still the WORLD_W x WORLD_H
+  // screen-projection space iso.ts draws into, so a CSS click maps 1:1 onto
+  // (sx, sy) — unproject() then turns that into world coords for the
+  // existing building-registry hit test.
   const handleClick = (e: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -57,8 +61,6 @@ export function TownView({
     const hit = worldPointToBuilding(engine.state.buildings, wx, wy);
     if (hit?.id === "shop") {
       onEnterShop();
-    } else if (hit?.id === "gate") {
-      onEnterWilderness();
     }
   };
 

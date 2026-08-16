@@ -36,8 +36,12 @@ function read(engine: GameEngine): AudioWatch {
   };
 }
 
-function ambienceFor(view: GameView, phase: string): AmbienceKind {
-  if (view === "wilderness") return "wilderness";
+// "wilderness" retired from GameView (issue #78 — the adventure strip panel
+// plays back the day's script inline, so there's no separate screen to key
+// ambience off anymore). SFX.ts's AmbienceKind still carries a "wilderness"
+// bed; picking it back up for strip-aware ambience is future work, not this
+// PR's (Dev A domain change, flagged in the PR description).
+function ambienceFor(phase: string): AmbienceKind {
   return phase === "night" ? "night" : "town";
 }
 
@@ -81,7 +85,7 @@ export function useGameAudio(engine: GameEngine): void {
         sound.play("gameOver");
       }
 
-      const bed = ambienceFor(now.view, now.phase);
+      const bed = ambienceFor(now.phase);
       if (now.view !== "gameover") sound.setAmbience(bed);
 
       prev.current = now;

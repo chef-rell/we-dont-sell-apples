@@ -323,3 +323,41 @@ diagonal facings, #70 iso town view, #71 `wdsa_save_v2` key switch — PRs
    `depthKey` anchor — verified against the door-in-front case (e.g. the
    shop door's depth exceeds the shop block's center depth, so a character
    standing at the door draws in front of the building, not behind it).
+
+**2026-08-16 — Phase 2 adventure strip landed** (issue #78,
+`AdventureStripRenderer.ts`/`AdventureStripPanel.tsx`). Replaces the #77
+placeholder with the real read-only playback of `GameState.currentScript`;
+`WildernessView` is deleted and `GameView` drops `"wilderness"` (the one
+non-additive contract change this PR makes — save-safe, since
+`GameStatePersistence.loadGame()` already force-resets `view` to `"town"`
+on every load). Build notes:
+
+1. **Night raids are not played back yet.** `AdventurerBehavior.
+   resolveNightRun()` generates its own small AdventureScript per night owl
+   but never stores it on `GameState.currentScript` (spec V2.5 reserves that
+   field for the one afternoon party script) — there is deliberately nothing
+   for the strip to read at night, so it just dark-tints the ambient scene
+   instead of trying to play anything. Giving night raids their own
+   presentation (and, if wanted, their own stored script field) is Phase 5's
+   night-raid tavern beat, not Phase 2's.
+2. Outbound playback progress is `(timeOfDay - afternoonStart) /
+   afternoonLength` against `PHASE_BOUNDS.afternoon` (0.35-0.60); an event
+   fires the first frame progress passes its `t`. The evening leg
+   (`PHASE_BOUNDS.evening`, 0.60-0.80) replays nothing — every
+   `AdventureScriptEvent.t` Combat.ts emits already lives inside the 0..1
+   outbound timeline, so evening is just the survivors' silent walk home,
+   right to left, at half the walk-frame rate.
+3. The renderer owns its own ephemeral presentation state (which events
+   have already fired their one-time flash/burst/label, the live
+   `Particles` instance, floating labels) at module scope rather than
+   threading it through the panel component's props, the same way
+   ShopView's rAF closure owns a `Particles` instance across frames — kept
+   this way so `AdventureStripPanel.tsx` stays a one-line call into
+   `renderStrip(ctx, state, now)`, same shape as every other view.
+4. `lootDrop` events carry an `itemName` that is actually an `ITEM_DEFS`
+   key (Combat.ts's `itemKey`), not a display name — the renderer resolves
+   it there for the icon/display-name/`baseValue` shown in the floating
+   "«name» — «value»g" label. `gearBreak`'s `itemName` is already a display
+   name (`Item.name` off the real equipped item), so it's shown as-is with
+   the generic `broken` icon rather than trying to reverse-look-up a def key
+   from a name.
