@@ -4,7 +4,7 @@
 // plan; the machine acts immediately on deterministic logic either way.
 
 import type { Adventurer, AdventureOutcome, ChatMessage, GameState, Item } from "../types";
-import { computeReaction, decidesToBuy, classifyPrice } from "../game/Economy";
+import { computeReaction, decidesToBuy, classifyPrice, equippedQuality } from "../game/Economy";
 import { resolveAdventure, fallbackAskPrice } from "../game/Combat";
 import { makeItem } from "./Item";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
@@ -95,6 +95,11 @@ export function stepAdventurer(
       }
       if (bc.plan === "shop" && !bc.shopped && (s.phase === "dawn" || s.phase === "morning")) {
         a.state = "heading_to_shop";
+        bc.target = TOWN.shopDoor;
+        break;
+      }
+      if (bc.lootToSell.length > 0 && s.phase === "evening") {
+        a.state = "returning"; // reuse the walk-to-shop-then-sell path
         bc.target = TOWN.shopDoor;
         break;
       }
@@ -235,9 +240,24 @@ export function stepAdventurer(
         if (stillOpen && s.phase !== "night") break; // waiting on the player
         bc.pendingOfferId = null; // resolved or expired; next item or leave
       }
+      if (s.phase === "night") {
+        // The shop day is over; whatever wasn't sold gets offered again
+        // tomorrow evening (nothing strands in the seller's pack). A still-
+        // open offer is withdrawn and its item re-queued.
+        if (bc.pendingOfferId) {
+          const openIdx = s.lootOffers.findIndex((o) => o.id === bc.pendingOfferId);
+          if (openIdx !== -1) {
+            bc.lootToSell.unshift(s.lootOffers[openIdx].item.id);
+            s.lootOffers.splice(openIdx, 1);
+          }
+          bc.pendingOfferId = null;
+        }
+        a.state = "wandering";
+        break;
+      }
       const nextId = bc.lootToSell.shift();
       const item = nextId ? a.inventory.find((it) => it.id === nextId) : undefined;
-      if (item && s.phase !== "night") {
+      if (item) {
         const offer = {
           id: `offer-${s.day}-${a.id}-${item.id.slice(0, 8)}`,
           adventurerId: a.id,
@@ -306,12 +326,7 @@ function pickShelfItem(a: Adventurer, s: GameState, excludeId?: string | null): 
   const scored = priced
     .map((it) => {
       let score = 0;
-      const slotQ =
-        it.category === "weapon" ? a.equipment.weapon?.quality ?? 0
-        : it.category === "armor" ? a.equipment.armor?.quality ?? 0
-        : it.category === "accessory" ? a.equipment.accessory?.quality ?? 0
-        : 0;
-      if (it.quality > slotQ) score += 10;
+      if (it.quality > equippedQuality(a, it)) score += 10;
       if (a.personality.preferredItems.includes(it.category)) score += 5;
       if (it.category === "consumable") score += 2;
       score -= (it.salePrice ?? 0) / 100;
