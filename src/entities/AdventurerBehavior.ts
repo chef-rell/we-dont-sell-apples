@@ -6,7 +6,8 @@
 import type { Adventurer, AdventureOutcome, ChatMessage, GameState, Item } from "../types";
 import { computeReaction, decidesToBuy, classifyPrice, equippedQuality } from "../game/Economy";
 import { recordReactionSeen, recordSale, recordWalkout } from "../game/Ledger";
-import { resolveAdventure, fallbackAskPrice } from "../game/Combat";
+import { resolveAdventure, generateAdventureScript, fallbackAskPrice } from "../game/Combat";
+import { makeRng } from "../utils/rng";
 import { makeItem } from "./Item";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
 import { getBuilding } from "../utils/TownBuildings";
@@ -251,7 +252,18 @@ export function stepAdventurer(
         ? s.phase === "dawn" || s.phase === "morning"
         : s.phase === "evening" || s.phase === "night";
       if (resolveNow) {
-        const outcome = resolveAdventure(a, s.day, { night: bc.onNightRun });
+        // v2 (spec V2.5/V2.6, issue #76): the day's party marched as one
+        // AdventureScript, generated once at the afternoon-phase boundary
+        // (GameEngine.formAfternoonParty) — facts are final from that
+        // moment, this just reads this member's slice of it. A straggler
+        // whose plan flipped to "adventure" after the party already formed
+        // (a late AI override) falls back to solo resolveAdventure() so a
+        // missed party bus never blocks anyone (§7: AI is never
+        // load-bearing). Night runs generate their own small solo script,
+        // resolved at dawn exactly as v1 resolved solo adventures.
+        const outcome = bc.onNightRun
+          ? resolveNightRun(a, s.day)
+          : (findScriptOutcome(s, a.id) ?? resolveAdventure(a, s.day, {}));
         bc.onNightRun = false;
         out.outcome = outcome;
         a.hp = Math.max(0, a.hp - outcome.damageTaken);
@@ -518,6 +530,26 @@ function walkToward(a: Adventurer, bc: BehaviorContext, dt: number): boolean {
   a.position.facing =
     Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up";
   return false;
+}
+
+// ---------- v2 AdventureScript wiring (issue #76) ----------
+
+/** This member's slice of today's party script, if the party already
+ *  formed and included them. */
+function findScriptOutcome(s: GameState, adventurerId: string): AdventureOutcome | null {
+  return s.currentScript?.memberOutcomes.find((o) => o.adventurerId === adventurerId) ?? null;
+}
+
+/** A night owl's solo run: its own tiny AdventureScript (party of one,
+ *  night: true), generated and resolved in the same beat — "resolved at
+ *  dawn as today" (spec V2.6). Not stored on state.currentScript, which is
+ *  reserved for the day's one afternoon party; the seed is drawn fresh here
+ *  (liveliness) and stored on the throwaway script for replay parity with
+ *  the party path, even though nothing persists it today. */
+function resolveNightRun(a: Adventurer, day: number): AdventureOutcome {
+  const seed = Math.floor(Math.random() * 2 ** 31);
+  const script = generateAdventureScript([a], day, { night: true, seed }, makeRng(seed));
+  return script.memberOutcomes[0];
 }
 
 // ---------- misc ----------

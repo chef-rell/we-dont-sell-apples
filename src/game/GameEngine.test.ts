@@ -7,6 +7,7 @@ import { GameEngine } from "./GameEngine";
 import { loadGame, saveGame, SAVE_KEY } from "./GameStatePersistence";
 import { makeItem } from "../entities/Item";
 import { resolveAdventure } from "./Combat";
+import type { Adventurer } from "../types";
 
 // Minimal localStorage stub — node has none.
 const store = new Map<string, string>();
@@ -169,6 +170,36 @@ describe("save/load", () => {
     saveGame(e.state);
     const loaded = loadGame();
     expect(loaded!.buildings).toEqual(e.state.buildings);
+  });
+
+  it("round-trips currentScript (#76)", () => {
+    const e = freshEngine();
+    // Force everyone to want to adventure today (fallbackMorningPlan shops
+    // first whenever gearScore < 4 and gold >= 25 — zero gold routes
+    // starting adventurers past that branch into "adventure" instead).
+    for (const a of e.state.adventurers) {
+      a.daysSinceLastAdventure = 99;
+      a.gold = 0;
+    }
+    let sawScript = false;
+    for (let i = 0; i < 6000 && !sawScript; i++) {
+      e.tick(100);
+      if (e.state.currentScript) sawScript = true;
+    }
+    expect(sawScript).toBe(true);
+    saveGame(e.state);
+    const loaded = loadGame();
+    expect(loaded!.currentScript).toEqual(e.state.currentScript);
+  });
+
+  it("defaults currentScript to null for a save written before it existed (#76)", () => {
+    const e = freshEngine();
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    delete raw.currentScript;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+    const loaded = loadGame();
+    expect(loaded!.currentScript).toBeNull();
   });
 
   it("defaults buildings for a save written before the registry existed (#56)", () => {
@@ -467,5 +498,165 @@ describe("gear durability", () => {
     resolveAdventure(a, 1);
     // Weapon should be gone (durability was 1, loss is at least 1)
     expect(a.equipment.weapon).toBeUndefined();
+  });
+});
+
+// ---------- AdventureScript + parties (spec V2.5/V2.6, issue #76) ----------
+
+// fallbackMorningPlan shops first whenever gearScore < 4 and gold >= 25;
+// starting adventurers begin with empty equipment, so zeroing gold is what
+// routes them into "adventure" instead (restlessness then clears the >=90
+// bar easily with daysSinceLastAdventure this high).
+function forceAdventurePlan(a: Adventurer): void {
+  a.daysSinceLastAdventure = 99;
+  a.gold = 0;
+}
+
+describe("party formation (#76)", () => {
+  it("groups the day's adventuring party into one script rather than one script per member", () => {
+    const e = freshEngine();
+    // Restlessness (fallbackMorningPlan) drives multiple starting adventurers
+    // toward "adventure" on the same day when they've all been idle a while.
+    for (const a of e.state.adventurers) forceAdventurePlan(a);
+    let maxPartySize = 0;
+    runDays(e, 3, () => {
+      if (e.state.currentScript) {
+        maxPartySize = Math.max(maxPartySize, e.state.currentScript.partyIds.length);
+      }
+    });
+    expect(maxPartySize).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a party member's applied outcome matches their slice of the script that formed", () => {
+    const e = freshEngine();
+    for (const a of e.state.adventurers) forceAdventurePlan(a);
+    let capturedScript: NonNullable<typeof e.state.currentScript> | null = null;
+    runDays(e, 2, () => {
+      if (!capturedScript && e.state.currentScript && e.state.currentScript.partyIds.length >= 2) {
+        capturedScript = structuredClone(e.state.currentScript);
+      }
+    });
+    expect(capturedScript).not.toBeNull();
+    const script = capturedScript!;
+    for (const memberOutcome of script.memberOutcomes) {
+      const applied = e.state.recentOutcomes.find(
+        (o) => o.adventurerId === memberOutcome.adventurerId && o.day === script.day,
+      );
+      expect(applied).toBeDefined();
+      expect(applied).toEqual(memberOutcome);
+    }
+  });
+
+  it("clears currentScript at day rollover", () => {
+    const e = freshEngine();
+    for (const a of e.state.adventurers) forceAdventurePlan(a);
+    let sawScript = false;
+    runDays(e, 1, () => {
+      if (e.state.currentScript) sawScript = true;
+    });
+    expect(sawScript).toBe(true);
+    expect(e.state.currentScript).toBeNull(); // a day has rolled over by here
+  });
+
+  it("nobody adventuring today leaves currentScript null", () => {
+    const e = freshEngine();
+    // Freshly rested, well-off adventurers with no restlessness lean shop/rest.
+    for (const a of e.state.adventurers) {
+      a.daysSinceLastAdventure = 0;
+      a.hp = a.maxHp;
+    }
+    let sawAfternoon = false;
+    let sawScript = false;
+    runDays(e, 1, () => {
+      if (e.state.phase === "afternoon") {
+        sawAfternoon = true;
+        if (e.state.currentScript) sawScript = true;
+      }
+    });
+    expect(sawAfternoon).toBe(true);
+    expect(sawScript).toBe(false);
+  });
+});
+
+describe("wipe stabilizer (#76, spec V2.6)", () => {
+  /** A weak-but-willing adventurer: full (small) hp so fallbackMorningPlan
+   *  doesn't send them to rest, zero gold so it doesn't send them shopping,
+   *  bare level/gear so combat math is unfavorable. */
+  function makeFragile(a: Adventurer): void {
+    forceAdventurePlan(a);
+    a.maxHp = 3;
+    a.hp = 3;
+    a.level = 1;
+    a.equipment = {};
+    a.personality.riskTolerance = 90; // keeps restlessness clearing the "adventure" bar even after a day off
+  }
+
+  it("a same-day multi-death wipe spawns more than one newcomer in a single wave", () => {
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    for (const a of e.state.adventurers) makeFragile(a);
+    const arrivalWaveSizes: number[] = [];
+    let prevCount = e.state.adventurers.length;
+    for (let i = 0; i < 6000 * 20; i++) {
+      e.tick(100);
+      if (e.state.adventurers.length > prevCount) {
+        arrivalWaveSizes.push(e.state.adventurers.length - prevCount);
+      }
+      prevCount = e.state.adventurers.length;
+    }
+    // Proof the wave size scales with the death count instead of always
+    // trickling in exactly one newcomer per rollover.
+    expect(arrivalWaveSizes.some((size) => size > 1)).toBe(true);
+  });
+
+  it("more deaths in a wave pull the next replacement in sooner than a lone death would", () => {
+    const singleDeath = new GameEngine(false);
+    singleDeath.state.aiMode = "off";
+    const soleVictim = singleDeath.state.adventurers[0];
+    makeFragile(soleVictim);
+    for (const a of singleDeath.state.adventurers.slice(1)) {
+      a.hp = a.maxHp; // keep everyone else safely out of danger
+      a.daysSinceLastAdventure = 0;
+      a.gold = 999; // stays shopping, never joins the party
+    }
+    let singleDeathDay = -1;
+    for (let i = 0; i < 6000 * 15 && singleDeathDay === -1; i++) {
+      singleDeath.tick(100);
+      if (!soleVictim.alive) singleDeathDay = singleDeath.state.day;
+    }
+    expect(singleDeathDay).toBeGreaterThan(0);
+
+    const wipe = new GameEngine(false);
+    wipe.state.aiMode = "off";
+    for (const a of wipe.state.adventurers) makeFragile(a);
+    let wipeDay = -1;
+    let sawMultiDeath = false;
+    let deadCountAtStart = wipe.state.adventurers.filter((a) => !a.alive).length;
+    for (let i = 0; i < 6000 * 20 && !sawMultiDeath; i++) {
+      wipe.tick(100);
+      const deadNow = wipe.state.adventurers.filter((a) => !a.alive).length;
+      // A meaningful wipe event: 3+ deaths accumulated without a
+      // replacement wave landing in between (a hard week, not just attrition).
+      if (deadNow - deadCountAtStart >= 3) {
+        wipeDay = wipe.state.day;
+        sawMultiDeath = true;
+      }
+    }
+    expect(sawMultiDeath).toBe(true);
+
+    // From each death day, count days until the FIRST replacement arrives.
+    let daysToFirstArrivalSingle = -1;
+    for (let d = 1; d <= 10 && daysToFirstArrivalSingle === -1; d++) {
+      for (let i = 0; i < 6000 && singleDeath.state.adventurers.length === 6; i++) singleDeath.tick(100);
+      if (singleDeath.state.adventurers.length > 6) daysToFirstArrivalSingle = singleDeath.state.day - singleDeathDay;
+    }
+    let daysToFirstArrivalWipe = -1;
+    for (let d = 1; d <= 10 && daysToFirstArrivalWipe === -1; d++) {
+      for (let i = 0; i < 6000 && wipe.state.adventurers.length === 6; i++) wipe.tick(100);
+      if (wipe.state.adventurers.length > 6) daysToFirstArrivalWipe = wipe.state.day - wipeDay;
+    }
+    expect(daysToFirstArrivalWipe).toBeGreaterThanOrEqual(0);
+    expect(daysToFirstArrivalSingle).toBeGreaterThanOrEqual(0);
+    expect(daysToFirstArrivalWipe).toBeLessThanOrEqual(daysToFirstArrivalSingle);
   });
 });
