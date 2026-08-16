@@ -28,6 +28,9 @@ export interface Item {
   salePrice: number | null; // player-set; null = not priced yet
   quality: number; // 1-10, drives combat math
   icon: string; // key into ItemRenderer's icon table
+  durability: number | null;    // null = non-gear (consumable/loot); 0 = broken
+  maxDurability: number | null;
+  timesRepaired: number;        // for future blacksmith; starts 0
 }
 
 // ---------- Adventurers ----------
@@ -143,6 +146,7 @@ export interface AdventureOutcome {
   lootItemKeys: string[]; // ITEM_DEFS keys found
   goldFound: number; // coin injected by the wilderness (the economy's faucet)
   narration: string | null; // AI text, arrives async; null until then/fallback
+  brokenItems: string[];  // names of gear that broke during this adventure
 }
 
 /** A returning adventurer offering loot to the player. Dev B's

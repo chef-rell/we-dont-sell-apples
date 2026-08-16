@@ -58,6 +58,9 @@ function item(salePrice: number | null, baseValue = 100, quality = 5): Item {
     salePrice,
     quality,
     icon: "sword",
+    durability: null,
+    maxDurability: null,
+    timesRepaired: 0,
   };
 }
 

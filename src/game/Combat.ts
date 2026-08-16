@@ -5,11 +5,12 @@
 
 import type { Adventurer, AdventureOutcome, WildernessArea } from "../types";
 import { encounterFor, type MonsterDef } from "../entities/Monster";
+import { DURABILITY_LOSS_MIN, DURABILITY_LOSS_MAX } from "../utils/constants";
 
 /** Adventurer combat power from level + gear (spec §7 death factors). */
 export function combatPower(a: Adventurer): number {
-  const weapon = a.equipment.weapon?.quality ?? 0;
-  const armor = a.equipment.armor?.quality ?? 0;
+  const weapon = (a.equipment.weapon && a.equipment.weapon.durability !== 0) ? a.equipment.weapon.quality : 0;
+  const armor = (a.equipment.armor && a.equipment.armor.durability !== 0) ? a.equipment.armor.quality : 0;
   const accessory = a.equipment.accessory?.quality ?? 0;
   return a.level * 3 + weapon * 2 + armor * 1.5 + accessory * 0.5;
 }
@@ -46,7 +47,7 @@ export function resolveAdventure(
   const won = Math.random() < winChance;
 
   // Damage taken scales with how outmatched they were; armor blunts it.
-  const armorQ = a.equipment.armor?.quality ?? 0;
+  const armorQ = (a.equipment.armor && a.equipment.armor.durability !== 0) ? a.equipment.armor.quality : 0;
   const baseDamage = won ? monster.damage * (0.6 + Math.random() * 0.6) : monster.damage * (1.2 + Math.random() * 0.8);
   const damageTaken = Math.max(1, Math.round(baseDamage - armorQ));
 
@@ -70,6 +71,20 @@ export function resolveAdventure(
     ? Math.round(monster.hp * (0.5 + Math.random() * 0.5) * (opts.night ? 1.6 : 1))
     : 0;
 
+  // Gear durability loss — adventuring wears equipment down.
+  const brokenItems: string[] = [];
+  const durLoss = DURABILITY_LOSS_MIN + Math.floor(Math.random() * (DURABILITY_LOSS_MAX - DURABILITY_LOSS_MIN + 1));
+  for (const slot of ["weapon", "armor"] as const) {
+    const gear = a.equipment[slot];
+    if (gear && gear.durability !== null && gear.durability > 0) {
+      gear.durability = Math.max(0, gear.durability - durLoss);
+      if (gear.durability === 0) {
+        brokenItems.push(gear.name);
+        a.equipment[slot] = undefined;
+      }
+    }
+  }
+
   return {
     adventurerId: a.id,
     area,
@@ -81,6 +96,7 @@ export function resolveAdventure(
     lootItemKeys,
     goldFound,
     narration: null, // AI narration attaches async; fallback leaves it null
+    brokenItems,
   };
 }
 
