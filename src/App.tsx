@@ -8,6 +8,7 @@ import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
 import { ChatPanel } from "./ui/ChatPanel";
 import { NightSummary } from "./ui/NightSummary";
+import { OfflineSummary } from "./ui/OfflineSummary";
 import { Toasts } from "./ui/Toasts";
 import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
@@ -101,6 +102,7 @@ export default function App() {
       {/* The stage is exactly as wide as the canvas, so overlays (night
           summary, chat) sit over the game rather than the whole window. */}
       <main key={run} style={{ position: "relative", maxWidth: WORLD_W, margin: "0 auto", width: "100%" }}>
+        <OfflineSummary engine={engine} />
         <NightSummary engine={engine} />
         {view !== "gameover" && <Toasts engine={engine} />}
         {view !== "gameover" && <ChatPanel engine={engine} />}

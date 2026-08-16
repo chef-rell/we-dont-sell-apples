@@ -372,9 +372,15 @@ function drawLog(
   ctx.font = `${3 * PX}px monospace`;
   ctx.textAlign = "left";
   ctx.fillStyle = PALETTE.textDim;
+  // Night owls head out after dark and resolve at dawn, so the copy can't
+  // assume everything happens on the afternoon-to-evening schedule.
+  const night = phase === "night";
   ctx.fillText(
     outCount > 0 ?
-      `${outCount} ${outCount === 1 ? "adventurer is" : "adventurers are"} out here · fights resolve in the evening`
+      `${outCount} ${outCount === 1 ? "adventurer is" : "adventurers are"} out here · ` +
+        (night ? "night runs resolve at dawn" : "fights resolve in the evening")
+    : night ?
+      "Quiet out here — only night owls go out after dark"
     : `Nobody is out here right now — they head through the gate in the afternoon (${phase})`,
     16,
     LOG_Y + 28,
