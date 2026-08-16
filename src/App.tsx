@@ -6,12 +6,14 @@ import { sound } from "./audio/SoundManager";
 import { useGameAudio } from "./audio/useGameAudio";
 import { GameEngine } from "./game/GameEngine";
 import { clearSave } from "./game/GameStatePersistence";
+import { ChatPanel } from "./ui/ChatPanel";
 import { NightSummary } from "./ui/NightSummary";
 import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
 import { ShopView } from "./views/ShopView";
 import { WildernessView } from "./views/WildernessView";
 import type { GameSpeed, GameView } from "./types";
+import { WORLD_W } from "./utils/constants";
 
 const SPEEDS: GameSpeed[] = [1, 1.5, 2];
 
@@ -95,8 +97,11 @@ export default function App() {
           ))}
         </div>
       </header>
-      <main key={run} style={{ position: "relative" }}>
+      {/* The stage is exactly as wide as the canvas, so overlays (night
+          summary, chat) sit over the game rather than the whole window. */}
+      <main key={run} style={{ position: "relative", maxWidth: WORLD_W, margin: "0 auto", width: "100%" }}>
         <NightSummary engine={engine} />
+        {view !== "gameover" && <ChatPanel engine={engine} />}
         {view === "gameover" ?
           <GameOverView engine={engine} onRestart={restart} />
         : view === "shop" ?
