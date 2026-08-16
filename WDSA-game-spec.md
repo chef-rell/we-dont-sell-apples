@@ -1143,3 +1143,22 @@ made for a reason; revisit freely at the playtest gate.
 - Tests: `npm test` (vitest) covers §6 band math, the economic loop, loot re-queue,
   merchant cycle, save/load, game over, and budget reset. `scripts/balance-report.ts`
   plays N headless days across markup strategies for balance comparisons.
+
+### §22 addendum — Phases 6-8 (built on owner's "keep going" instruction, playtest pending)
+
+- **Morale/social (§14)**: reputation = town's average shopkeeper relationship (captures
+  angry walkouts even with zero sales); tavern talk spreads it to bystanders (×4);
+  sustained bad reputation drags morale below the daily drift; 4 consecutive low-morale
+  days → the adventurer leaves town (warning message the day before); regulars at
+  loyalty ≥ 75 (announced once); good reputation shaves 1-2 days off arrivals.
+- **Night runs (§13)**: night owls with morale ≥ 50 and HP > 60%, ~20% of nights;
+  threat ×1.5, guaranteed second loot roll, gold ×1.6, resolved at dawn.
+- **Auto-pilot (§13)**: per-category average markup over the last 50 price records;
+  auto-pricing does not feed pricingHistory (no learning from itself). Offline sim
+  runs the real engine headlessly at 65% net-gain damping, cap 30 days.
+- **Chat (§16)**: deterministic template lines always ship instantly; full-AI mode
+  upgrades text in place when Haiku responds (≤4 AI chat messages/day). Player chat
+  routes by keyword: named adventurer > stock talk (gear-needy) > danger talk
+  (cautious) > random.
+- **Economy**: wilderness gold faucet (monster HP-scaled drops) added after the
+  balance harness showed a fixed money supply stalls all sales.
