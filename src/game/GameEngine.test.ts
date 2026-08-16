@@ -196,3 +196,34 @@ describe("shop expansion", () => {
     expect(e.expandShop()).toBe(false); // max
   });
 });
+
+describe("stalemate rescue", () => {
+  it("a well-disposed adventurer donates junk when the shop is broke", () => {
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    e.state.gold = 10;
+    e.state.inventory = [];
+    e.state.shelves = e.state.shelves.map(() => null);
+    // Run a full day so onNewDay fires.
+    for (let i = 0; i < 600 * 10 + 50; i++) e.tick(100);
+    const stocked =
+      e.state.shelves.filter(Boolean).length + e.state.inventory.length;
+    expect(stocked).toBeGreaterThan(0); // charity landed
+    expect(e.state.messages.some((m) => m.content.includes("Rough patch"))).toBe(true);
+  });
+
+  it("no charity while the shop is healthy", () => {
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    // Default start: 200g + full shelves → no donations.
+    for (let i = 0; i < 600 * 10 + 50; i++) e.tick(100);
+    expect(e.state.messages.some((m) => m.content.includes("Rough patch"))).toBe(false);
+  });
+
+  it("retireShop routes to the game over screen", () => {
+    const e = new GameEngine(false);
+    e.retireShop();
+    expect(e.state.view).toBe("gameover");
+    expect(e.state.speed).toBe(0);
+  });
+});
