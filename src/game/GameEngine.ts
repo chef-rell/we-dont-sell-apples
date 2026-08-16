@@ -438,6 +438,7 @@ function buildAdventurers(
     },
     alive: true,
     daysSinceLastAdventure: 0,
+    browsingItemId: null,
     nightOwl: c.risk >= 70,
     appearance: {
       skin: Math.floor(Math.random() * 4),
