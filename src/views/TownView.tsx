@@ -8,7 +8,19 @@ import { skyTint } from "../game/DayNightCycle";
 import { drawBuilding } from "../rendering/BuildingRenderer";
 import { drawCharacter } from "../rendering/CharacterRenderer";
 import { hash2d, px, rect } from "../rendering/PixelRenderer";
+import type { AdventurerState } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
+
+// States where the adventurer is outdoors in town and belongs in this scene.
+// `resting` stays in: they're indoors, but the sprite by their house reads as
+// "home" and keeps the town looking inhabited at dawn and night.
+const IN_TOWN: AdventurerState[] = [
+  "resting",
+  "wandering",
+  "heading_to_shop",
+  "heading_to_gate",
+  "returning",
+];
 
 export function TownView({ engine, onEnterShop }: { engine: GameEngine; onEnterShop: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -105,9 +117,12 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
   px(ctx, TOWN.gate.x / PX, TOWN.gate.y / PX - 6, 3, 14, PALETTE.stone[0]);
   px(ctx, TOWN.gate.x / PX, TOWN.gate.y / PX + 16, 3, 14, PALETTE.stone[1]);
 
-  // Adventurers (sorted by y for painter's order)
+  // Adventurers who are actually outdoors in town (issue #15): shoppers are
+  // inside the shop and get drawn by ShopView, and adventurers are away in the
+  // wilderness until evening — showing them loitering at the gate gives away
+  // that nothing is happening out there (§2/§17).
   const walkFrame: 0 | 1 = Math.floor(now / 180) % 2 === 0 ? 0 : 1;
-  const alive = s.adventurers.filter((a) => a.alive);
+  const alive = s.adventurers.filter((a) => a.alive && IN_TOWN.includes(a.state));
   alive.sort((a, b) => a.position.y - b.position.y);
   for (const a of alive) {
     drawCharacter(ctx, a, a.position.x, a.position.y, a.position.moving ? walkFrame : 0);
