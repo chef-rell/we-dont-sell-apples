@@ -1,53 +1,36 @@
-// Main game loop and time management. Phase 1 scope: time advances through
-// day phases, adventurers wander the town with idle waypoint movement.
-// Shop logic, AI, and economy arrive in later phases.
+// Main game loop and time management. Phase 3: adventurers run on the real
+// behavior state machine; Haiku steers daily plans asynchronously with a
+// deterministic fallback always in place (spec §7).
 
 import type { Adventurer, AdventurerClass, GameState } from "../types";
 import { advanceTime, phaseFor } from "./DayNightCycle";
 import { generateName } from "../utils/names";
+import { loadBudget } from "../utils/TokenBudget";
+import { startingInventory } from "../entities/Item";
+import { makeDecision, type MorningPlanDecision } from "../entities/AdventurerAI";
+import {
+  TOWN,
+  freshContext,
+  stepAdventurer,
+  applyPlanOverride,
+  type BehaviorContext,
+} from "../entities/AdventurerBehavior";
 import {
   DEFAULT_DAILY_LIMIT_CALLS,
   DEFAULT_DAILY_LIMIT_TOKENS,
   SHOP_SLOTS_BY_LEVEL,
   STARTING_ADVENTURER_COUNT,
   STARTING_GOLD,
-  WORLD_H,
-  WORLD_W,
 } from "../utils/constants";
 
-// Town landmarks in world px — rendering and movement both use these.
-export const TOWN = {
-  shop: { x: 120, y: 140 },
-  tavern: { x: 640, y: 120 },
-  houses: [
-    { x: 200, y: 420 },
-    { x: 360, y: 460 },
-    { x: 560, y: 430 },
-  ],
-  gate: { x: 880, y: 300 },
-  square: { x: 440, y: 280 },
-} as const;
+export { TOWN }; // single source of truth for town landmarks lives in AdventurerBehavior
 
-const WANDER_POINTS = [
-  { x: 440, y: 300 }, // square
-  { x: 500, y: 260 },
-  { x: 380, y: 340 },
-  { x: 660, y: 200 }, // near tavern
-  { x: 260, y: 380 }, // near houses
-  { x: 200, y: 220 }, // near shop
-];
-
-const WALK_SPEED = 60; // world px per second at 1×
-
-interface WanderTarget {
-  x: number;
-  y: number;
-  idleUntil: number; // game timeOfDay to idle until after arriving
-}
+const MAX_MESSAGES = 100;
 
 export class GameEngine {
   state: GameState;
-  private targets = new Map<string, WanderTarget>();
+  private contexts = new Map<string, BehaviorContext>();
+  private plannedDay = new Map<string, number>(); // adventurer id → last day AI planning fired
 
   constructor() {
     this.state = createInitialState();
@@ -69,77 +52,98 @@ export class GameEngine {
 
     const dt = (deltaMs / 1000) * s.speed;
     for (const a of s.adventurers) {
-      if (a.alive) this.wander(a, dt);
+      if (!a.alive) continue;
+      const bc = this.contextFor(a.id);
+      const result = stepAdventurer(a, bc, s, dt);
+      for (const m of result.messages) this.pushMessage(m);
+      this.maybePlanWithAI(a);
     }
   }
 
-  /** Phase 1 idle behavior: pick a point, walk there, linger, repeat.
-   *  At night, head home and stop. Replaced by the real behavior state
-   *  machine in Phase 3. */
-  private wander(a: Adventurer, dt: number): void {
+  private contextFor(id: string): BehaviorContext {
+    let bc = this.contexts.get(id);
+    if (!bc) {
+      bc = freshContext();
+      this.contexts.set(id, bc);
+    }
+    return bc;
+  }
+
+  /**
+   * Morning planning via Haiku (§7 decision point 1) — fired once per
+   * adventurer per game day at dawn/morning, fully async. The fallback plan
+   * is already active; if the AI answers in time it refines the plan, and
+   * its in-character line lands in the log. Light/off AI modes still plan
+   * (it's a Light-AI decision point); "off" skips entirely.
+   */
+  private maybePlanWithAI(a: Adventurer): void {
     const s = this.state;
-    const night = s.phase === "night";
-    let target = this.targets.get(a.id);
+    if (s.aiMode === "off") return;
+    if (s.phase !== "dawn" && s.phase !== "morning") return;
+    if (this.plannedDay.get(a.id) === s.day) return;
+    this.plannedDay.set(a.id, s.day);
 
-    if (night) {
-      const home = TOWN.houses[a.appearance.skin % TOWN.houses.length];
-      target = { x: home.x + 20, y: home.y + 60, idleUntil: 2 };
-      a.state = "resting";
-    } else if (!target || target.idleUntil < s.timeOfDay) {
-      const p = WANDER_POINTS[Math.floor(Math.random() * WANDER_POINTS.length)];
-      target = {
-        x: p.x + Math.floor(Math.random() * 80) - 40,
-        y: p.y + Math.floor(Math.random() * 60) - 30,
-        idleUntil: s.timeOfDay + 0.02 + Math.random() * 0.04,
-      };
-      a.state = "wandering";
-    }
-    this.targets.set(a.id, target);
+    const gearQ =
+      (a.equipment.weapon?.quality ?? 0) + (a.equipment.armor?.quality ?? 0);
+    const context =
+      `It is morning on day ${s.day}. Days since your last adventure: ${a.daysSinceLastAdventure}. ` +
+      `Your gear quality score: ${gearQ}/10. The town shop ${
+        s.shelves.some((it) => it !== null) ? "has items on its shelves" : "looks sparsely stocked"
+      }.`;
 
-    const dx = target.x - a.position.x;
-    const dy = target.y - a.position.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 4) {
-      a.position.moving = false;
-      return;
+    void makeDecision("morning_plan", a, context, s.tokenBudget).then((d) => {
+      if (!d || !("plan" in d)) return; // fallback already in charge
+      const md = d as MorningPlanDecision;
+      applyPlanOverride(a, this.contextFor(a.id), md.plan);
+      if (md.say) {
+        this.pushMessage({
+          id: `chat-${s.day}-${a.id}-plan`,
+          senderId: a.id,
+          senderName: a.name,
+          type: "ambient",
+          content: md.say,
+          timestamp: s.timeOfDay,
+          day: s.day,
+        });
+      }
+    });
+  }
+
+  private pushMessage(m: GameState["messages"][number]): void {
+    this.state.messages.push(m);
+    if (this.state.messages.length > MAX_MESSAGES) {
+      this.state.messages.splice(0, this.state.messages.length - MAX_MESSAGES);
     }
-    const step = Math.min(dist, WALK_SPEED * dt);
-    a.position.x += (dx / dist) * step;
-    a.position.y += (dy / dist) * step;
-    a.position.moving = true;
-    a.position.facing =
-      Math.abs(dx) > Math.abs(dy)
-        ? dx > 0 ? "right" : "left"
-        : dy > 0 ? "down" : "up";
   }
 }
 
 // ---------- Initial state ----------
 
 function createInitialState(): GameState {
+  const slots = SHOP_SLOTS_BY_LEVEL[0];
+  const shelves: GameState["shelves"] = new Array(slots).fill(null);
+  // Starting stock goes straight onto the shelves, unpriced — the player's
+  // first act is setting prices (spec §6). Unpriced items don't sell.
+  for (const [i, item] of startingInventory().entries()) {
+    if (i < slots) shelves[i] = item;
+  }
+
   return {
     day: 1,
-    timeOfDay: 0.1, // start at morning
+    timeOfDay: 0.1,
     phase: "morning",
     speed: 1,
     view: "town",
     gold: STARTING_GOLD,
-    inventory: [], // starting items land in Phase 2 with the Item model
-    shelves: new Array(SHOP_SLOTS_BY_LEVEL[0]).fill(null),
+    inventory: [],
+    shelves,
     shopLevel: 1,
     adventurers: createStartingAdventurers(),
     messages: [],
     tokenBudget: {
+      ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
       dailyLimitTokens: DEFAULT_DAILY_LIMIT_TOKENS,
-      callsToday: 0,
-      tokensToday: 0,
-      totalCallsAllTime: 0,
-      totalTokensAllTime: 0,
-      estimatedCostToday: 0,
-      estimatedCostAllTime: 0,
-      budgetExhausted: false,
-      lastResetDate: new Date().toISOString().slice(0, 10),
     },
     aiMode: "light",
     stats: { totalGoldEarned: 0, itemsSold: 0, adventurersServed: 0, adventurersLost: 0 },
@@ -154,13 +158,14 @@ const STARTING_CAST: Array<{
   traits: string[];
   spendingStyle: Adventurer["personality"]["spendingStyle"];
   risk: number;
+  prefers: Adventurer["personality"]["preferredItems"];
 }> = [
-  { cls: "warrior", gold: 120, traits: ["brave", "loyal"], spendingStyle: "impulsive", risk: 70 },
-  { cls: "ranger", gold: 45, traits: ["cautious", "frugal"], spendingStyle: "frugal", risk: 30 },
-  { cls: "rogue", gold: 90, traits: ["reckless", "impulsive"], spendingStyle: "impulsive", risk: 90 },
-  { cls: "mage", gold: 110, traits: ["studious", "careful"], spendingStyle: "careful", risk: 45 },
-  { cls: "cleric", gold: 50, traits: ["cheerful", "generous"], spendingStyle: "generous", risk: 35 },
-  { cls: "veteran", gold: 200, traits: ["grizzled", "picky"], spendingStyle: "careful", risk: 55 },
+  { cls: "warrior", gold: 120, traits: ["brave", "loyal"], spendingStyle: "impulsive", risk: 70, prefers: ["weapon"] },
+  { cls: "ranger", gold: 45, traits: ["cautious", "frugal"], spendingStyle: "frugal", risk: 30, prefers: ["consumable", "armor"] },
+  { cls: "rogue", gold: 90, traits: ["reckless", "impulsive"], spendingStyle: "impulsive", risk: 90, prefers: ["weapon", "accessory"] },
+  { cls: "mage", gold: 110, traits: ["studious", "careful"], spendingStyle: "careful", risk: 45, prefers: ["accessory"] },
+  { cls: "cleric", gold: 50, traits: ["cheerful", "generous"], spendingStyle: "generous", risk: 35, prefers: ["consumable", "accessory"] },
+  { cls: "veteran", gold: 200, traits: ["grizzled", "picky"], spendingStyle: "careful", risk: 55, prefers: ["weapon", "armor"] },
 ];
 
 function createStartingAdventurers(): Adventurer[] {
@@ -179,13 +184,13 @@ function createStartingAdventurers(): Adventurer[] {
       spendingStyle: c.spendingStyle,
       riskTolerance: c.risk,
       haggleSkill: 20 + Math.floor(Math.random() * 60),
-      preferredItems: [],
+      preferredItems: c.prefers,
       quirks: [],
     },
     state: "wandering",
     position: {
-      x: 300 + i * 60,
-      y: 260 + (i % 3) * 50,
+      x: TOWN.square.x - 100 + i * 45,
+      y: TOWN.square.y - 20 + (i % 3) * 45,
       facing: "down",
       moving: false,
     },
@@ -209,12 +214,4 @@ function createStartingAdventurers(): Adventurer[] {
       hair: Math.floor(Math.random() * 5),
     },
   }));
-}
-
-// Bounds guard used by movement
-export function clampToWorld(x: number, y: number): { x: number; y: number } {
-  return {
-    x: Math.max(0, Math.min(WORLD_W - 40, x)),
-    y: Math.max(0, Math.min(WORLD_H - 64, y)),
-  };
 }
