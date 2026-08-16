@@ -38,6 +38,7 @@ export function loadGame(): GameState | null {
     state.offlineSummary ??= null;
     state.ledger ??= freshLedger(state.day);
     state.ledgerHistory ??= [];
+    state.lastSalePriceByName ??= {};
     state.speed = 1; // never resume paused or fast-forwarded
     state.view = "town";
     return state;

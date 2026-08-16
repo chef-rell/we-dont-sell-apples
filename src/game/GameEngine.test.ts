@@ -263,7 +263,31 @@ describe("trade ledger", () => {
       day: e.state.day,
     });
     expect(e.acceptLootOffer("offer-test")).toBe(true);
-    expect(e.state.shelves[0]?.name).toBe("Echo Crystal");
-    expect(e.state.shelves[0]?.salePrice).toBeNull(); // unpriced, ready to price
+    const shelved = e.state.shelves.at(0); // .at() defeats the null-literal narrowing above
+    expect(shelved?.name).toBe("Echo Crystal");
+    expect(shelved?.salePrice).toBeNull(); // unpriced, ready to price
+  });
+});
+
+describe("pricing defaults", () => {
+  it("suggestedPrice prefers proven sale prices over merely-set prices", () => {
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    const sword = e.state.shelves.find((it) => it?.name === "Iron Sword")!;
+    e.setPrice(sword.id, 45); // set but never sold
+    expect(e.suggestedPrice("Iron Sword")).toEqual({ price: 45, fromSale: false });
+    e.state.lastSalePriceByName["Iron Sword"] = 38; // a sale happened
+    expect(e.suggestedPrice("Iron Sword")).toEqual({ price: 38, fromSale: true });
+    expect(e.suggestedPrice("Nonexistent Thing")).toBeNull();
+  });
+
+  it("sales record their price for future defaults", () => {
+    const e = new GameEngine(false);
+    e.state.aiMode = "off";
+    for (const it of e.state.shelves) if (it) e.setPrice(it.id, Math.round(it.baseValue * 1.2));
+    for (let i = 0; i < 600 * 10; i++) e.tick(100);
+    if (e.state.stats.itemsSold > 0) {
+      expect(Object.keys(e.state.lastSalePriceByName).length).toBeGreaterThan(0);
+    }
   });
 });
