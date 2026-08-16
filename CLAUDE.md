@@ -1,6 +1,6 @@
 # CLAUDE.md — agent guide for We Don't Sell Apples
 
-Read `README.md` first for architecture; `WDSA-game-spec.md` is the design source of truth (§22 = deviations log — update it when you change a design decision).
+Read `README.md` first for architecture. `WDSA-game-spec.md` is the design source of truth for v1 systems; `WDSA-v2-spec.md` governs the v2 pivot (scope, architecture, phase plan). Deviations logs: v1 spec §22, v2 spec V2.15 — update the relevant one when you change a design decision.
 
 ## Session start checklist (both devs — do this FIRST)
 
@@ -13,7 +13,7 @@ Read `README.md` first for architecture; `WDSA-game-spec.md` is the design sourc
 ## Commands
 
 - `npm run build` — tsc + vite; MUST pass before any push
-- `npm test` — vitest, currently 44 tests; MUST pass before any push
+- `npm test` — vitest, currently 60 tests; MUST pass before any push
 - `npm run lint` — oxlint (3 known fast-refresh warnings in view files are accepted debt)
 - `npx tsx scripts/balance-report.ts [days]` — headless economy comparison across markup strategies; run before/after balance changes
 
