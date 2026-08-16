@@ -290,3 +290,33 @@ plus #65, a test-determinism fix). Build notes for later phases:
 4. `WildernessView` passes a fixed `"right"` facing (staged tableau, not live
    movement), and the equipped weapon renders as one uniform blade regardless
    of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
+
+**2026-08-16 — Phase 1 iso town complete** (issue #70). The legacy `TOWN`
+shim is deleted (note 2 resolved); `TownView` reads `GameState.buildings`
+directly through `src/rendering/iso.ts`. Build notes:
+
+1. Note 3's registry split (generous click `footprint` vs true `door`
+   anchor) is *not* cleaned up — the shop's footprint is still click-test
+   slack, not its wall box. The iso view works around this in the render
+   layer instead: a building's visual box is derived per-kind (tavern/house
+   reuse their footprint verbatim since it already is their wall box; the
+   shop derives its wall box from `door` with a fixed offset, mirroring how
+   the old TOWN shim related the two). Registry geometry itself is
+   untouched, so `TownBuildings.test.ts` didn't need to change.
+2. The three-face shading rule (`drawIsoBlock`, top light / left mid / right
+   dark + outline) applies to *solids* — buildings, trees, the fountain.
+   Ground tiles (inherently flat — a floor has no faces) and small
+   decorative markings on a wall face (door, glowing windows) are drawn as
+   plain fills on top of an already-shaded face, not as their own 3-face
+   blocks; read as the practical scope of "no unshaded flat rect ever
+   appears in the world view."
+3. PALETTE gained five additive tokens consumed by `shade()`:
+   `foliage`, `water`, `roofWarm`, `windowLit`, `windowDark` (the last two
+   match the exact hex the old flat `BuildingRenderer` hardcoded, now
+   shared). `BuildingRenderer.ts`/`drawBuilding` itself is now dead code
+   (only `TownView` ever imported it) — left in place rather than deleted,
+   since removing an unrelated file wasn't in scope for #70.
+4. Depth sort uses each building's footprint *center* (not a corner) as its
+   `depthKey` anchor — verified against the door-in-front case (e.g. the
+   shop door's depth exceeds the shop block's center depth, so a character
+   standing at the door draws in front of the building, not behind it).

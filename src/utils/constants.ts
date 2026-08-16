@@ -43,6 +43,15 @@ export const PALETTE = {
   textDim: "#a09890",
   skins: ["#e8b88a", "#d4a07a", "#f0d0a0", "#c09070"],
   hair: ["#2c1810", "#c0392b", "#e8c35c", "#1a1a1a", "#d4d4e8"],
+  // ---- Iso town additions (spec V2.4, issue #70) ----
+  // Single base tones fed through rendering/iso.ts's shade() to derive the
+  // three-face light/mid/dark set — additive PALETTE entries, no ad-hoc hex
+  // in the new iso draw functions.
+  foliage: "#2e5429", // tree canopy base
+  water: "#5a8dbd", // fountain basin water
+  roofWarm: "#6b4a15", // tavern roof (matches the old flat-view hardcoded tone)
+  windowLit: "#ffd98a", // building window glow at night
+  windowDark: "#3a3a52", // building window by day
 } as const;
 
 // Logical canvas size in world px (scaled to fit the window)
