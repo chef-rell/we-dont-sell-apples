@@ -85,6 +85,19 @@ export default function App() {
           Day {hud.day} · {hud.phase}
         </div>
         <div className="hud-controls">
+          <button
+            onClick={() => {
+              // Player-initiated end of run: confirm, then route through the
+              // normal Game Over screen (stats + restart button).
+              if (window.confirm("Retire this shop? You'll see your run's stats and can start a new one.")) {
+                engine.retireShop();
+                setView("gameover");
+              }
+            }}
+            title="Retire this shop and start over"
+          >
+            🏳
+          </button>
           <button onClick={() => setSettingsOpen(true)} title="Settings">
             ⚙
           </button>

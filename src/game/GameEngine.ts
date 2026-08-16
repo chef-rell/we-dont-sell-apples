@@ -150,6 +150,35 @@ export class GameEngine {
       this.replacementDueDay -= arrivalBonus(social.reputation);
     }
 
+    // Charity (playtest finding): a shop grinding along with nothing to sell
+    // and no coin to restock is soft-locked into a slog. When the player is
+    // clearly struggling, a well-disposed adventurer donates a junk item —
+    // relationships paying off (§14), and self-limiting: once per day, only
+    // while genuinely broke, only from someone who doesn't resent you.
+    const shelfValue = s.shelves.reduce((n, it) => n + (it?.baseValue ?? 0), 0);
+    if (s.gold < 30 && shelfValue + s.inventory.reduce((n, it) => n + it.baseValue, 0) < 30) {
+      const donors = s.adventurers.filter((a) => a.alive && a.relationships.shopkeeper >= 0);
+      if (donors.length > 0) {
+        const donor = donors[Math.floor(Math.random() * donors.length)];
+        const junk = ["rusty_dagger", "crude_hide", "rations", "bat_wing"][
+          Math.floor(Math.random() * 4)
+        ];
+        const item = makeItem(junk);
+        const empty = s.shelves.findIndex((slot) => slot === null);
+        if (empty !== -1) s.shelves[empty] = item;
+        else s.inventory.push(item);
+        this.pushMessage({
+          id: `sys-charity-${s.day}`,
+          senderId: donor.id,
+          senderName: donor.name,
+          type: "social",
+          content: `${donor.name} left a ${item.name} on your counter. "Rough patch, eh? Pay me back in discounts."`,
+          timestamp: s.timeOfDay,
+          day: s.day,
+        });
+      }
+    }
+
     // Replacement arrivals (§7): due date passed, or town below minimum.
     const aliveCount = s.adventurers.filter((a) => a.alive).length;
     const due = this.replacementDueDay !== null && s.day >= this.replacementDueDay;
@@ -276,6 +305,14 @@ export class GameEngine {
       s.view = "gameover";
       s.speed = 0;
     }
+  }
+
+  /** Player retires the run (playtest finding: no exit from a soft-locked
+   *  slog short of literal bankruptcy). Routes through the normal Game Over
+   *  screen so the run's stats are shown and the restart button is there. */
+  retireShop(): void {
+    this.state.view = "gameover";
+    this.state.speed = 0;
   }
 
   /** Manual save; also called automatically at each day rollover. */
