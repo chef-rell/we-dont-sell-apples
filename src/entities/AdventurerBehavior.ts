@@ -403,6 +403,7 @@ function completePurchase(
   a.gold -= price;
   s.gold += price;
   recordSale(s, item, price);
+  s.lastSalePriceByName[item.name] = price; // a sale proves the price clears
   s.stats.totalGoldEarned += price;
   s.stats.itemsSold += 1;
   s.shelves[shelfIdx] = null;

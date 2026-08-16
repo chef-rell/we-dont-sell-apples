@@ -23,27 +23,38 @@ const lastPriceByName = new Map<string, number>();
 
 export function PricingPanel({
   item,
+  suggestion,
   onSetPrice,
   onClose,
 }: {
   item: Item;
+  /** Engine's opening suggestion: last SOLD price (proven to clear) or last
+   *  set price. Null when this item name has no history. */
+  suggestion?: { price: number; fromSale: boolean } | null;
   onSetPrice: (price: number | null) => void;
   onClose: () => void;
 }) {
-  const [price, setPrice] = useState(
-    () => item.salePrice ?? lastPriceByName.get(item.name) ?? DEFAULT_PRICE,
-  );
+  const initialFor = (it: Item) =>
+    it.salePrice ?? suggestion?.price ?? lastPriceByName.get(it.name) ?? DEFAULT_PRICE;
+  const [price, setPrice] = useState(() => initialFor(item));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   // Mirrors item.salePrice !== null. The item is mutated outside React, so the
   // footer label needs local state to re-render when the tag comes on or off.
   const [listed, setListed] = useState(item.salePrice !== null);
 
-  // Re-seed when the player clicks a different item without closing the panel.
+  // Opening (or switching to) an item lists it at the shown price right away —
+  // "not for sale until you nudge the number" was a new-player trap. Unprice
+  // remains the explicit way to de-list.
   useEffect(() => {
-    setPrice(item.salePrice ?? lastPriceByName.get(item.name) ?? DEFAULT_PRICE);
-    setListed(item.salePrice !== null);
+    const initial = initialFor(item);
+    setPrice(initial);
     setEditing(false);
+    if (item.salePrice === null) {
+      onSetPrice(initial);
+    }
+    setListed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item]);
 
   const commit = (next: number) => {
@@ -83,6 +94,9 @@ export function PricingPanel({
           <div style={{ color: PALETTE.textLight, fontSize: 15 }}>{item.name}</div>
           <div style={{ color: PALETTE.textDim, fontSize: 12 }}>
             {item.category} · quality {item.quality}/10
+            {suggestion?.fromSale && (
+              <span style={{ color: PALETTE.gold }}> · last sold {suggestion.price}g</span>
+            )}
           </div>
         </div>
       </div>

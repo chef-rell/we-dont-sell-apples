@@ -228,6 +228,20 @@ export class GameEngine {
     return true;
   }
 
+  /** Best opening price for the pricing panel: the last price this item name
+   *  actually SOLD at (proven to clear), else the last price the player set
+   *  for it, else null (panel falls back to its own default). */
+  suggestedPrice(itemName: string): { price: number; fromSale: boolean } | null {
+    const sold = this.state.lastSalePriceByName[itemName];
+    if (sold !== undefined) return { price: sold, fromSale: true };
+    for (let i = this.state.pricingHistory.length - 1; i >= 0; i--) {
+      if (this.state.pricingHistory[i].itemName === itemName) {
+        return { price: this.state.pricingHistory[i].priceSet, fromSale: false };
+      }
+    }
+    return null;
+  }
+
   /** Cost of the next shop expansion, or null at max level (§5). */
   nextExpansionCost(): number | null {
     return EXPANSION_COSTS[this.state.shopLevel - 1] ?? null;
@@ -497,6 +511,7 @@ function createInitialState(): GameState {
     pricingHistory: [],
     ledger: freshLedger(1),
     ledgerHistory: [],
+    lastSalePriceByName: {},
     autoPilotEnabled: false,
     offlineSummary: null,
     tokenBudget: {

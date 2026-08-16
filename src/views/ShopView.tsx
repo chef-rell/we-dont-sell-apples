@@ -163,7 +163,12 @@ export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () 
       />
       {sel && (
         <div style={panelAnchor(sel.slot, shelfLayout(engine.state.shelves.length))}>
-          <PricingPanel item={sel.item} onSetPrice={setPrice} onClose={() => setSel(null)} />
+          <PricingPanel
+            item={sel.item}
+            suggestion={engine.suggestedPrice(sel.item.name)}
+            onSetPrice={setPrice}
+            onClose={() => setSel(null)}
+          />
         </div>
       )}
       {cornerButtons(cartHere, offerCount, canExpand).map((btn, row) => (

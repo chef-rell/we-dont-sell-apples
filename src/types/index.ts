@@ -269,6 +269,7 @@ export interface GameState {
   lootOffers: LootOffer[]; // pending buy-from-adventurer offers (spec §3b/§8)
   recentOutcomes: AdventureOutcome[]; // last few adventures, for wilderness view + summaries
   ledger: DayLedger; // today's running trade ledger
+  lastSalePriceByName: Record<string, number>; // proven-to-clear prices, feeds pricing defaults
   ledgerHistory: DayLedger[]; // previous days, most recent last (capped)
   merchant: MerchantState | null; // wholesale supplier; non-null during afternoons
   pricingHistory: PriceRecord[]; // player price-setting log (auto-pilot learns from this)
