@@ -175,6 +175,21 @@ export interface PriceRecord {
   daySet: number;
 }
 
+// ---------- Offline simulation (spec §13) ----------
+
+/** What happened while the player was away. Produced by OfflineSim on load;
+ *  Dev B's "While You Were Away" overlay consumes it and clears the field. */
+export interface OfflineSummary {
+  daysElapsed: number;
+  goldStart: number;
+  goldEnd: number;
+  itemsSold: number;
+  lootBought: number;
+  adventurersLost: string[]; // names
+  adventurersArrived: string[]; // names
+  notableEvents: string[]; // human-readable lines
+}
+
 // ---------- Chat (message bus from day one; spec §16) ----------
 
 export type ChatMessageType =
@@ -237,6 +252,8 @@ export interface GameState {
   recentOutcomes: AdventureOutcome[]; // last few adventures, for wilderness view + summaries
   merchant: MerchantState | null; // wholesale supplier; non-null during afternoons
   pricingHistory: PriceRecord[]; // player price-setting log (auto-pilot learns from this)
+  autoPilotEnabled: boolean; // player toggle (§13); offline sim uses it regardless
+  offlineSummary: OfflineSummary | null; // set on load after an away period; UI clears it
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {
