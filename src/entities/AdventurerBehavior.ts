@@ -3,8 +3,10 @@
 // Never calls the API — AI decisions arrive asynchronously and steer the
 // plan; the machine acts immediately on deterministic logic either way.
 
-import type { Adventurer, ChatMessage, GameState, Item } from "../types";
+import type { Adventurer, AdventureOutcome, ChatMessage, GameState, Item } from "../types";
 import { computeReaction, decidesToBuy, classifyPrice } from "../game/Economy";
+import { resolveAdventure, fallbackAskPrice } from "../game/Combat";
+import { makeItem } from "./Item";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
 
 // Landmarks duplicated from GameEngine's TOWN to avoid an import cycle;
@@ -37,14 +39,29 @@ export interface BehaviorContext {
   /** Set true once the day's shop trip / adventure is done. */
   shopped: boolean;
   adventured: boolean;
+  /** Loot keys still to offer the player after returning. */
+  lootToSell: string[]; // item ids in a.inventory
+  /** The offer currently on the table, if any. */
+  pendingOfferId: string | null;
 }
 
 export function freshContext(): BehaviorContext {
-  return { plan: "rest", timer: 0, target: null, browsingItem: null, shopped: false, adventured: false };
+  return {
+    plan: "rest",
+    timer: 0,
+    target: null,
+    browsingItem: null,
+    shopped: false,
+    adventured: false,
+    lootToSell: [],
+    pendingOfferId: null,
+  };
 }
 
 export interface StepResult {
   messages: ChatMessage[];
+  /** Outcome resolved this step (engine attaches AI narration + records it). */
+  outcome: AdventureOutcome | null;
 }
 
 /**
@@ -57,7 +74,7 @@ export function stepAdventurer(
   s: GameState,
   dt: number,
 ): StepResult {
-  const out: StepResult = { messages: [] };
+  const out: StepResult = { messages: [], outcome: null };
   if (!a.alive) return out;
   bc.timer = Math.max(0, bc.timer - dt);
 
@@ -144,24 +161,93 @@ export function stepAdventurer(
         a.state = "adventuring";
         bc.adventured = true;
         a.daysSinceLastAdventure = 0;
-        // Off-screen until evening. Combat resolution lands in Phase 4 —
-        // for now the trip is uneventful and they return at dusk.
       }
       break;
     }
 
     case "adventuring": {
+      // Resolve at evening: deterministic outcome roll (§8), then home —
+      // or not. The engine attaches AI narration to the outcome async.
       if (s.phase === "evening" || s.phase === "night") {
+        const outcome = resolveAdventure(a, s.day);
+        out.outcome = outcome;
+        a.hp = Math.max(0, a.hp - outcome.damageTaken);
+
+        if (!outcome.survived) {
+          a.alive = false;
+          a.state = "dead";
+          s.stats.adventurersLost += 1;
+          out.messages.push(
+            systemMsg(s, `${a.name} has fallen to a ${outcome.monsterName} in the ${areaName(outcome.area)}...`),
+          );
+          break;
+        }
+
+        // Loot into inventory; remember what's for sale.
+        for (const key of outcome.lootItemKeys) {
+          const item = makeItem(key);
+          a.inventory.push(item);
+          bc.lootToSell.push(item.id);
+        }
+        if (outcome.monsterDefeated) {
+          a.morale = Math.min(100, a.morale + 8);
+          a.level = Math.min(10, a.level + (Math.random() < 0.25 ? 1 : 0));
+        } else {
+          a.morale = Math.max(0, a.morale - 10);
+        }
+
         a.state = "returning";
-        bc.target = TOWN.square;
+        bc.target = bc.lootToSell.length > 0 ? TOWN.shopDoor : TOWN.square;
         a.position.x = TOWN.gate.x;
         a.position.y = TOWN.gate.y + 30;
+        out.messages.push(
+          systemMsg(
+            s,
+            outcome.monsterDefeated
+              ? `${a.name} returned from the ${areaName(outcome.area)} with loot!`
+              : `${a.name} limped back from the ${areaName(outcome.area)} empty-handed.`,
+          ),
+        );
       }
       break;
     }
 
     case "returning": {
       if (walkToward(a, bc, dt)) {
+        if (bc.lootToSell.length > 0 && s.phase === "evening") {
+          a.state = "selling_loot";
+          bc.timer = 0;
+        } else {
+          a.state = "wandering";
+          bc.timer = 4;
+        }
+      }
+      break;
+    }
+
+    case "selling_loot": {
+      // One offer at a time; the player accepts/declines via the engine
+      // (Dev B's buy-from-adventurer UI drives that). Offers expire at night.
+      if (bc.pendingOfferId) {
+        const stillOpen = s.lootOffers.some((o) => o.id === bc.pendingOfferId);
+        if (stillOpen && s.phase !== "night") break; // waiting on the player
+        bc.pendingOfferId = null; // resolved or expired; next item or leave
+      }
+      const nextId = bc.lootToSell.shift();
+      const item = nextId ? a.inventory.find((it) => it.id === nextId) : undefined;
+      if (item && s.phase !== "night") {
+        const offer = {
+          id: `offer-${s.day}-${a.id}-${item.id.slice(0, 8)}`,
+          adventurerId: a.id,
+          adventurerName: a.name,
+          item,
+          askPrice: fallbackAskPrice(a, item.baseValue),
+          day: s.day,
+        };
+        s.lootOffers.push(offer);
+        bc.pendingOfferId = offer.id;
+        out.messages.push(systemMsg(s, `${a.name} offers ${item.name} for ${offer.askPrice}g.`));
+      } else {
         a.state = "wandering";
         bc.timer = 4;
       }
@@ -184,6 +270,7 @@ export function stepAdventurer(
 // ---------- day start ----------
 
 function beginDay(a: Adventurer, bc: BehaviorContext): void {
+  a.hp = Math.min(a.maxHp, a.hp + 10); // overnight recovery
   bc.plan = fallbackMorningPlan(a);
   bc.shopped = false;
   bc.adventured = false;
@@ -317,6 +404,10 @@ function walkToward(a: Adventurer, bc: BehaviorContext, dt: number): boolean {
 }
 
 // ---------- misc ----------
+
+function areaName(area: "forest_edge" | "shadow_cave"): string {
+  return area === "forest_edge" ? "Forest Edge" : "Shadow Cave";
+}
 
 function jitter(a: Adventurer, range: number): number {
   return ((a.appearance.skin * 7 + a.appearance.hair * 13) % range) - range / 2;

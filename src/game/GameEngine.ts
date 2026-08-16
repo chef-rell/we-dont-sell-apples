@@ -2,7 +2,7 @@
 // behavior state machine; Haiku steers daily plans asynchronously with a
 // deterministic fallback always in place (spec §7).
 
-import type { Adventurer, AdventurerClass, GameState } from "../types";
+import type { Adventurer, AdventurerClass, AdventureOutcome, GameState } from "../types";
 import { advanceTime, phaseFor } from "./DayNightCycle";
 import { generateName } from "../utils/names";
 import { loadBudget } from "../utils/TokenBudget";
@@ -18,6 +18,9 @@ import {
 import {
   DEFAULT_DAILY_LIMIT_CALLS,
   DEFAULT_DAILY_LIMIT_TOKENS,
+  MIN_ADVENTURER_COUNT,
+  REPLACEMENT_DAYS_MAX,
+  REPLACEMENT_DAYS_MIN,
   SHOP_SLOTS_BY_LEVEL,
   STARTING_ADVENTURER_COUNT,
   STARTING_GOLD,
@@ -51,13 +54,126 @@ export class GameEngine {
     s.phase = phaseFor(s.timeOfDay);
 
     const dt = (deltaMs / 1000) * s.speed;
+    const dayRolled = t >= 1;
     for (const a of s.adventurers) {
       if (!a.alive) continue;
       const bc = this.contextFor(a.id);
       const result = stepAdventurer(a, bc, s, dt);
       for (const m of result.messages) this.pushMessage(m);
+      if (result.outcome) this.handleOutcome(a, result.outcome);
       this.maybePlanWithAI(a);
     }
+    if (dayRolled) this.onNewDay();
+  }
+
+  // ---------- Phase 4: adventure outcomes, death, arrivals, loot offers ----------
+
+  private handleOutcome(a: Adventurer, outcome: AdventureOutcome): void {
+    const s = this.state;
+    s.recentOutcomes.push(outcome);
+    if (s.recentOutcomes.length > 12) s.recentOutcomes.shift();
+
+    if (!outcome.survived) {
+      // Mourning (§14): the town feels the loss.
+      for (const other of s.adventurers) {
+        if (other.alive && other.id !== a.id) {
+          other.morale = Math.max(0, other.morale - 12);
+        }
+      }
+      this.replacementDueDay = s.day + REPLACEMENT_DAYS_MIN +
+        Math.floor(Math.random() * (REPLACEMENT_DAYS_MAX - REPLACEMENT_DAYS_MIN + 1));
+    }
+
+    // AI narration (§7 decision point 4): fire-and-forget; the outcome is
+    // final and stated in the prompt — the AI describes, never decides.
+    if (s.aiMode === "off") return;
+    const context =
+      `You went to the ${outcome.area === "forest_edge" ? "Forest Edge" : "Shadow Cave"} today and ` +
+      `${outcome.monsterDefeated ? "defeated" : "were beaten back by"} a ${outcome.monsterName}. ` +
+      `You took ${outcome.damageTaken} damage${outcome.survived ? "" : " and did not survive"}. ` +
+      `Loot found: ${outcome.lootItemKeys.length > 0 ? outcome.lootItemKeys.join(", ") : "none"}.`;
+    void makeDecision("narrate_adventure", a, context, s.tokenBudget).then((d) => {
+      if (d && "text" in d) {
+        outcome.narration = d.text;
+        this.pushMessage({
+          id: `story-${outcome.day}-${a.id}`,
+          senderId: a.id,
+          senderName: a.name,
+          type: "story",
+          content: d.text,
+          timestamp: this.state.timeOfDay,
+          day: this.state.day,
+        });
+      }
+    });
+  }
+
+  private replacementDueDay: number | null = null;
+
+  private onNewDay(): void {
+    const s = this.state;
+    // Loot offers don't survive the night.
+    s.lootOffers = s.lootOffers.filter((o) => o.day >= s.day);
+
+    // Replacement arrivals (§7): due date passed, or town below minimum.
+    const aliveCount = s.adventurers.filter((a) => a.alive).length;
+    const due = this.replacementDueDay !== null && s.day >= this.replacementDueDay;
+    if ((due || aliveCount < MIN_ADVENTURER_COUNT) && aliveCount < STARTING_ADVENTURER_COUNT) {
+      this.replacementDueDay = null;
+      const newcomer = createReplacementAdventurer();
+      s.adventurers.push(newcomer);
+      this.pushMessage({
+        id: `sys-arrival-${s.day}`,
+        senderId: "system",
+        senderName: "Town",
+        type: "system",
+        content: `A new face in town: ${newcomer.name} the ${newcomer.class} has arrived.`,
+        timestamp: s.timeOfDay,
+        day: s.day,
+      });
+    }
+  }
+
+  /** Player accepts a loot offer (Dev B's buy UI calls this). */
+  acceptLootOffer(offerId: string): boolean {
+    const s = this.state;
+    const idx = s.lootOffers.findIndex((o) => o.id === offerId);
+    if (idx === -1) return false;
+    const offer = s.lootOffers[idx];
+    if (s.gold < offer.askPrice) return false;
+    const seller = s.adventurers.find((a) => a.id === offer.adventurerId);
+    if (!seller) return false;
+
+    s.gold -= offer.askPrice;
+    seller.gold += offer.askPrice;
+    seller.inventory = seller.inventory.filter((it) => it.id !== offer.item.id);
+    s.inventory.push({ ...offer.item, salePrice: null });
+    seller.morale = Math.min(100, seller.morale + 4);
+    seller.relationships.shopkeeper = Math.min(100, seller.relationships.shopkeeper + 2);
+    s.lootOffers.splice(idx, 1);
+    this.pushMessage({
+      id: `sys-bought-${offer.id}`,
+      senderId: "system",
+      senderName: "Town",
+      type: "system",
+      content: `You bought ${offer.item.name} from ${offer.adventurerName} for ${offer.askPrice}g.`,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
+    return true;
+  }
+
+  /** Player declines a loot offer. The seller remembers (§14). */
+  declineLootOffer(offerId: string): void {
+    const s = this.state;
+    const idx = s.lootOffers.findIndex((o) => o.id === offerId);
+    if (idx === -1) return;
+    const offer = s.lootOffers[idx];
+    const seller = s.adventurers.find((a) => a.id === offer.adventurerId);
+    if (seller) {
+      seller.morale = Math.max(0, seller.morale - 3);
+    }
+    s.lootOffers.splice(idx, 1);
   }
 
   private contextFor(id: string): BehaviorContext {
@@ -140,6 +256,8 @@ function createInitialState(): GameState {
     shopLevel: 1,
     adventurers: createStartingAdventurers(),
     messages: [],
+    lootOffers: [],
+    recentOutcomes: [],
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
@@ -168,8 +286,27 @@ const STARTING_CAST: Array<{
   { cls: "veteran", gold: 200, traits: ["grizzled", "picky"], spendingStyle: "careful", risk: 55, prefers: ["weapon", "armor"] },
 ];
 
+/** A newcomer drawn from the cast templates with fresh identity and no history. */
+function createReplacementAdventurer(): Adventurer {
+  const c = STARTING_CAST[Math.floor(Math.random() * STARTING_CAST.length)];
+  const [a] = buildAdventurers([c], TOWN.gate.x - 40, TOWN.gate.y + 30);
+  return a;
+}
+
 function createStartingAdventurers(): Adventurer[] {
-  return STARTING_CAST.slice(0, STARTING_ADVENTURER_COUNT).map((c, i) => ({
+  return buildAdventurers(
+    STARTING_CAST.slice(0, STARTING_ADVENTURER_COUNT),
+    TOWN.square.x - 100,
+    TOWN.square.y - 20,
+  );
+}
+
+function buildAdventurers(
+  cast: typeof STARTING_CAST,
+  originX: number,
+  originY: number,
+): Adventurer[] {
+  return cast.map((c, i) => ({
     id: crypto.randomUUID(),
     name: generateName(),
     class: c.cls,
@@ -189,8 +326,8 @@ function createStartingAdventurers(): Adventurer[] {
     },
     state: "wandering",
     position: {
-      x: TOWN.square.x - 100 + i * 45,
-      y: TOWN.square.y - 20 + (i % 3) * 45,
+      x: originX + i * 45,
+      y: originY + (i % 3) * 45,
       facing: "down",
       moving: false,
     },
