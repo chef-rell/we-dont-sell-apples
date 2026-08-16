@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { GameEngine } from "../game/GameEngine";
-import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
+import { drawItemWithRarity, ICON_CELL, rarityNameColor } from "../rendering/ItemRenderer";
 import type { Item } from "../types";
 import { PALETTE, PX } from "../utils/constants";
 
@@ -85,7 +85,9 @@ function StockRow({ item, gold, onBuy }: { item: Item; gold: number; onBuy: () =
     <div style={rowStyle}>
       <ItemIcon item={item} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ color: PALETTE.textLight, fontSize: 13 }}>{item.name}</div>
+        <div style={{ color: rarityNameColor(item, PALETTE.textLight), fontSize: 13 }}>
+          {item.name}
+        </div>
         <div style={{ color: PALETTE.textDim, fontSize: 11 }}>
           {item.category} · quality {item.quality}/10
         </div>
@@ -113,7 +115,7 @@ function ItemIcon({ item }: { item: Item }) {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, ICON_PX, ICON_PX);
-    drawItemIcon(ctx, item, 0, 0);
+    drawItemWithRarity(ctx, item, 0, 0);
   }, [item]);
   return <canvas ref={ref} width={ICON_PX} height={ICON_PX} style={{ imageRendering: "pixelated" }} />;
 }

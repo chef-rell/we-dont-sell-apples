@@ -11,7 +11,7 @@ import type { GameEngine } from "../game/GameEngine";
 import { skyTint } from "../game/DayNightCycle";
 import { computeReaction } from "../game/Economy";
 import { drawCharacter } from "../rendering/CharacterRenderer";
-import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
+import { drawItemWithRarity, ICON_CELL, spawnRaritySparkle } from "../rendering/ItemRenderer";
 import { Particles } from "../rendering/Particles";
 import { rect } from "../rendering/PixelRenderer";
 import { drawReaction } from "../rendering/ReactionRenderer";
@@ -396,8 +396,15 @@ export function renderShop(
       ctx.save();
       ctx.translate(iconX, iconY);
       ctx.scale(ICON_SCALE, ICON_SCALE);
-      drawItemIcon(ctx, item, 0, 0);
+      drawItemWithRarity(ctx, item, 0, 0);
       ctx.restore();
+
+      // Rare/legendary stock throws off the occasional sparkle — legendary
+      // persistently, rare subtly (spawnRaritySparkle no-ops below rare).
+      if (particles && item.rarity !== "common" && item.rarity !== "uncommon") {
+        const chance = item.rarity === "legendary" ? 0.02 : 0.006;
+        if (Math.random() < chance) spawnRaritySparkle(particles, item, iconX, iconY, ICON_PX);
+      }
 
       // Price tag (or a dash for unpriced stock — the player prices these next)
       const label = item.salePrice === null ? "—" : `${item.salePrice}g`;

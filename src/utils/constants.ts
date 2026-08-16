@@ -54,6 +54,10 @@ export const PALETTE = {
   roofWarm: "#6b4a15", // tavern roof (matches the old flat-view hardcoded tone)
   windowLit: "#ffd98a", // building window glow at night
   windowDark: "#3a3a52", // building window by day
+  // ---- Rarity glow system (spec V2.9, issue #92) ----
+  rarityUncommon: "#5bcf5b", // uncommon border glow
+  rarityRare: "#4a9de8", // rare border glow
+  rarityLegendary: "#b06ee8", // legendary border glow (paired with PALETTE.gold)
 } as const;
 
 // Logical canvas size in world px (scaled to fit the window)
