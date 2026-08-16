@@ -5,6 +5,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { GameEngine } from "./GameEngine";
 import { loadGame, saveGame } from "./GameStatePersistence";
+import { makeItem } from "../entities/Item";
+import { resolveAdventure } from "./Combat";
 
 // Minimal localStorage stub — node has none.
 const store = new Map<string, string>();
@@ -379,5 +381,44 @@ describe("town movement feels like a town (#50)", () => {
       widestSpread = Math.max(widestSpread, spread);
     });
     expect(widestSpread).toBeGreaterThan(100);
+  });
+});
+
+describe("gear durability", () => {
+  it("new weapons and armor have durability; loot does not", () => {
+    const sword = makeItem("iron_sword");
+    const armor = makeItem("leather_armor");
+    const loot = makeItem("crude_hide");
+    expect(sword.durability).toBeGreaterThan(0);
+    expect(sword.maxDurability).toBe(sword.durability);
+    expect(armor.durability).toBeGreaterThan(0);
+    expect(loot.durability).toBeNull();
+  });
+
+  it("combat reduces gear durability", () => {
+    const e = freshEngine();
+    const a = e.state.adventurers[0];
+    // Give adventurer gear with known durability
+    a.equipment.weapon = makeItem("iron_sword");
+    a.equipment.armor = makeItem("leather_armor");
+    const startWeaponDur = a.equipment.weapon!.durability!;
+    const startArmorDur = a.equipment.armor!.durability!;
+    resolveAdventure(a, 1);
+    // Durability should decrease (or gear broke and was unequipped)
+    const weaponDur = a.equipment.weapon?.durability ?? 0;
+    const armorDur = a.equipment.armor?.durability ?? 0;
+    expect(weaponDur).toBeLessThan(startWeaponDur);
+    expect(armorDur).toBeLessThan(startArmorDur);
+  });
+
+  it("broken gear is unequipped", () => {
+    const e = freshEngine();
+    const a = e.state.adventurers[0];
+    const sword = makeItem("iron_sword");
+    sword.durability = 1; // about to break
+    a.equipment.weapon = sword;
+    resolveAdventure(a, 1);
+    // Weapon should be gone (durability was 1, loss is at least 1)
+    expect(a.equipment.weapon).toBeUndefined();
   });
 });

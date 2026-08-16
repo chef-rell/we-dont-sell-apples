@@ -58,3 +58,9 @@ export const REPLACEMENT_DAYS_MAX = 3;
 // ---------- Token budget (spec §7) ----------
 export const DEFAULT_DAILY_LIMIT_CALLS = 200;
 export const DEFAULT_DAILY_LIMIT_TOKENS = 100_000;
+
+// ---------- Gear durability ----------
+export const BASE_DURABILITY = 20;
+export const DURABILITY_QUALITY_SCALE = 5; // maxDurability = BASE + quality * SCALE
+export const DURABILITY_LOSS_MIN = 1;
+export const DURABILITY_LOSS_MAX = 3;

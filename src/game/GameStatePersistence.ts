@@ -39,6 +39,24 @@ export function loadGame(): GameState | null {
     state.ledger ??= freshLedger(state.day);
     state.ledgerHistory ??= [];
     state.lastSalePriceByName ??= {};
+    // Durability forward-compat: items in all collections get defaults.
+    const patchItem = (it: any) => {
+      if (!it) return;
+      it.durability ??= null;
+      it.maxDurability ??= null;
+      it.timesRepaired ??= 0;
+    };
+    for (const it of state.inventory) patchItem(it);
+    for (const it of state.shelves) patchItem(it);
+    if (state.merchant) for (const it of state.merchant.stock) patchItem(it);
+    for (const a of state.adventurers) {
+      for (const it of a.inventory) patchItem(it);
+      if (a.equipment.weapon) patchItem(a.equipment.weapon);
+      if (a.equipment.armor) patchItem(a.equipment.armor);
+      if (a.equipment.accessory) patchItem(a.equipment.accessory);
+    }
+    for (const o of state.recentOutcomes) o.brokenItems ??= [];
+    for (const lo of state.lootOffers) patchItem(lo.item);
     state.speed = 1; // never resume paused or fast-forwarded
     state.view = "town";
     return state;

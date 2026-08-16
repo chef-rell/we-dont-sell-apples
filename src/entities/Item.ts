@@ -1,6 +1,7 @@
 // Item definitions and generation (spec §5).
 
 import type { Item, ItemCategory } from "../types";
+import { BASE_DURABILITY, DURABILITY_QUALITY_SCALE } from "../utils/constants";
 
 interface ItemDef {
   name: string;
@@ -43,6 +44,13 @@ export function makeItem(defKey: string): Item {
     salePrice: null,
     quality: def.quality,
     icon: def.icon,
+    durability: (def.category === "weapon" || def.category === "armor")
+      ? BASE_DURABILITY + def.quality * DURABILITY_QUALITY_SCALE
+      : null,
+    maxDurability: (def.category === "weapon" || def.category === "armor")
+      ? BASE_DURABILITY + def.quality * DURABILITY_QUALITY_SCALE
+      : null,
+    timesRepaired: 0,
   };
 }
 

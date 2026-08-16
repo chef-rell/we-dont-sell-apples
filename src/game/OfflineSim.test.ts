@@ -51,6 +51,9 @@ describe("auto-pilot inference", () => {
       salePrice: null,
       quality: 2,
       icon: "ring",
+      durability: null,
+      maxDurability: null,
+      timesRepaired: 0,
     });
     expect(price).toBe(150); // overall = 1.5
   });
