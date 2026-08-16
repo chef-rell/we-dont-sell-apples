@@ -1,18 +1,19 @@
 // Shop View: interior selling scene (spec §3b) — shelves of stock, a counter,
 // and the shopkeeper. Owns its own canvas + rAF loop and keeps the sim ticking
 // while the player is inside. Clicking a shelf item opens the Moonlighter
-// pricing panel (§6), and adventurers who are browsing or buying show up in
-// the aisle. Reaction bubbles over their heads need the shelf item they're
-// examining, which the engine keeps private today — see issue #12.
+// pricing panel (§6), and adventurers browsing the shop stand in front of the
+// item they're examining with their reaction to its price over their head.
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import type { GameEngine } from "../game/GameEngine";
+import { computeReaction } from "../game/Economy";
 import { drawCharacter } from "../rendering/CharacterRenderer";
 import { drawItemIcon, ICON_CELL } from "../rendering/ItemRenderer";
 import { rect } from "../rendering/PixelRenderer";
+import { drawReaction } from "../rendering/ReactionRenderer";
 import { PricingPanel } from "../ui/PricingPanel";
-import type { Item } from "../types";
+import type { Adventurer, GameState, Item } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 
 // Shelf grid layout (12 slots at shop level 1 = 3 rows × 4 columns).
@@ -29,8 +30,8 @@ const ICON_PX = ICON_CELL * PX * ICON_SCALE; // on-screen icon footprint
 // shelf column. Beyond four, they queue up a row further back (drawn first, so
 // the front row overlaps them) offset half a slot, keeping a crowd readable.
 const CHAR_H = 64; // drawCharacter's sprite height in world px
-const AISLE_FRONT_Y = 620; // feet line, front row
-const AISLE_BACK_Y = 584; // feet line, back row
+const AISLE_FRONT_Y = 604; // feet line, front row (name plate sits below it)
+const AISLE_BACK_Y = 568; // feet line, back row
 const CUSTOMER_SPOT_X = [0, 1, 2, 3].map((col) => slotRect(col, 0).x + SLOT_W / 2);
 
 export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () => void }) {
@@ -158,6 +159,42 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/**
+ * Give each customer a standing spot, preferring the lane in front of the
+ * shelf column holding the item they're examining so the bubble reads against
+ * the right item. Contested lanes fall back to the first free spot; spots past
+ * the front row (indices >= lane count) are the back row.
+ */
+function placeCustomers(customers: Adventurer[], s: GameState) {
+  const lanes = CUSTOMER_SPOT_X.length;
+  const wanted = customers.map((a) => {
+    const slot = a.browsingItemId
+      ? s.shelves.findIndex((it) => it?.id === a.browsingItemId)
+      : -1;
+    return { a, item: slot >= 0 ? s.shelves[slot] : null, preferred: slot >= 0 ? slot % COLS : -1 };
+  });
+
+  const taken = new Set<number>();
+  const placed: { a: Adventurer; item: Item | null; spot: number }[] = [];
+
+  // Pass 1: everyone who wants a specific lane and can have it.
+  for (const w of wanted) {
+    if (w.preferred >= 0 && !taken.has(w.preferred)) {
+      taken.add(w.preferred);
+      placed.push({ a: w.a, item: w.item, spot: w.preferred });
+    }
+  }
+  // Pass 2: everyone else takes the first free spot (front row, then back).
+  for (const w of wanted) {
+    if (placed.some((p) => p.a.id === w.a.id)) continue;
+    let spot = 0;
+    while (spot < lanes * 2 - 1 && taken.has(spot)) spot++;
+    taken.add(spot);
+    placed.push({ a: w.a, item: w.item, spot });
+  }
+  return placed;
+}
+
 /** 1-pixel-unit hollow frame (the fill stays visible through it). */
 function outline(
   ctx: CanvasRenderingContext2D,
@@ -247,31 +284,32 @@ export function renderShop(
     )
     .sort((a, b) => (a.id < b.id ? -1 : 1));
   const idleFrame = (Math.floor(performance.now() / 500) % 2) as 0 | 1;
-  const lanes = CUSTOMER_SPOT_X.length;
+  const spots = placeCustomers(customers, s);
 
   // Back row first so the front row overlaps it.
-  const indices = [...customers.keys()];
-  const drawOrder = [...indices.filter((i) => i >= lanes), ...indices.filter((i) => i < lanes)];
-  for (const i of drawOrder) {
-    const a = customers[i];
-    const back = i >= lanes;
-    const x = CUSTOMER_SPOT_X[i % lanes] + (back ? SLOT_W / 2 : 0);
+  for (const { a, item, spot } of [...spots].sort((p, q) => q.spot - p.spot)) {
+    const back = spot >= CUSTOMER_SPOT_X.length;
+    const x = CUSTOMER_SPOT_X[spot % CUSTOMER_SPOT_X.length] + (back ? SLOT_W / 2 : 0);
     const feetY = back ? AISLE_BACK_Y : AISLE_FRONT_Y;
     const headY = feetY - CHAR_H;
 
     rect(ctx, x - 16, feetY - PX, 32, PX, "#2c1f18"); // floor shadow
     drawCharacter(ctx, a, x - 20, headY, idleFrame);
 
+    // Name below the feet, leaving the airspace above the head to the bubble.
     ctx.font = `${3 * PX}px monospace`;
     ctx.textAlign = "center";
     ctx.fillStyle = PALETTE.textDim;
-    ctx.fillText(a.name, x, headY - 10);
+    ctx.fillText(a.name, x, feetY + 16);
 
-    // A coin over a buyer's head — the engine has already decided the sale
-    // (§6: rendering draws the verdict, it never computes one).
+    // Reaction to the item they're examining (§6). computeReaction is the
+    // single source of the verdict — this only draws what it returns.
+    if (item) drawReaction(ctx, computeReaction(a, item), x, headY);
+
+    // Coins in hand once the engine has decided the sale.
     if (a.state === "buying") {
-      rect(ctx, x - 6, headY - 32, 12, 12, PALETTE.gold);
-      rect(ctx, x - 6, headY - 32, 12, PX, "#f4dc9a");
+      rect(ctx, x + 20, headY + 28, 12, 12, PALETTE.gold);
+      rect(ctx, x + 20, headY + 28, 12, PX, "#f4dc9a");
     }
   }
   ctx.textAlign = "left";
