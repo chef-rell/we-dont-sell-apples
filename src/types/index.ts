@@ -150,6 +150,26 @@ export interface LootOffer {
   day: number; // offers expire at the end of the day they're made
 }
 
+// ---------- Wholesale supply (spec §5 gold sinks / §15 Phase 2 restocking) ----------
+
+/** The traveling wholesale supplier's daily offering. Present during the
+ *  afternoon phase; player buys at base value via engine.buyWholesale(). */
+export interface MerchantState {
+  day: number; // day this stock was rolled
+  stock: Item[]; // items for sale at their baseValue
+}
+
+// ---------- Pricing history (feeds §13 auto-pilot inference) ----------
+
+export interface PriceRecord {
+  itemCategory: ItemCategory;
+  itemName: string;
+  priceSet: number;
+  baseValue: number;
+  markupRatio: number;
+  daySet: number;
+}
+
 // ---------- Chat (message bus from day one; spec §16) ----------
 
 export type ChatMessageType =
@@ -210,6 +230,8 @@ export interface GameState {
   messages: ChatMessage[];
   lootOffers: LootOffer[]; // pending buy-from-adventurer offers (spec §3b/§8)
   recentOutcomes: AdventureOutcome[]; // last few adventures, for wilderness view + summaries
+  merchant: MerchantState | null; // wholesale supplier; non-null during afternoons
+  pricingHistory: PriceRecord[]; // player price-setting log (auto-pilot learns from this)
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

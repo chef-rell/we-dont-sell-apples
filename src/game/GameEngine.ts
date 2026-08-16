@@ -6,7 +6,8 @@ import type { Adventurer, AdventurerClass, AdventureOutcome, GameState } from ".
 import { advanceTime, phaseFor } from "./DayNightCycle";
 import { generateName } from "../utils/names";
 import { loadBudget } from "../utils/TokenBudget";
-import { startingInventory } from "../entities/Item";
+import { makeItem, startingInventory } from "../entities/Item";
+import { loadGame, saveGame } from "./GameStatePersistence";
 import { makeDecision, type MorningPlanDecision } from "../entities/AdventurerAI";
 import {
   TOWN,
@@ -35,8 +36,10 @@ export class GameEngine {
   private contexts = new Map<string, BehaviorContext>();
   private plannedDay = new Map<string, number>(); // adventurer id → last day AI planning fired
 
-  constructor() {
-    this.state = createInitialState();
+  constructor(resume = true) {
+    // Continue from an existing save when one exists (spec §12); pass
+    // resume=false for an explicit New Game.
+    this.state = (resume ? loadGame() : null) ?? createInitialState();
   }
 
   /** Advance the simulation by a real-time delta (ms). */
@@ -63,6 +66,8 @@ export class GameEngine {
       if (result.outcome) this.handleOutcome(a, result.outcome);
       this.maybePlanWithAI(a);
     }
+    this.updateMerchant();
+    this.checkGameOver();
     if (dayRolled) this.onNewDay();
   }
 
@@ -112,6 +117,7 @@ export class GameEngine {
 
   private onNewDay(): void {
     const s = this.state;
+    saveGame(s); // auto-save at the day rollover (§12)
     // Loot offers don't survive the night.
     s.lootOffers = s.lootOffers.filter((o) => o.day >= s.day);
 
@@ -132,6 +138,91 @@ export class GameEngine {
         day: s.day,
       });
     }
+  }
+
+  // ---------- v1 completion: pricing API, wholesale, save, game over ----------
+
+  /**
+   * Set (or clear) an item's sale price. THE way to price items — records
+   * pricing history for the §13 auto-pilot. Searches shelves and stockroom.
+   */
+  setPrice(itemId: string, price: number | null): boolean {
+    const s = this.state;
+    const item =
+      s.shelves.find((it) => it?.id === itemId) ??
+      s.inventory.find((it) => it.id === itemId);
+    if (!item) return false;
+    item.salePrice = price;
+    if (price !== null) {
+      s.pricingHistory.push({
+        itemCategory: item.category,
+        itemName: item.name,
+        priceSet: price,
+        baseValue: item.baseValue,
+        markupRatio: price / item.baseValue,
+        daySet: s.day,
+      });
+      if (s.pricingHistory.length > 500) s.pricingHistory.splice(0, s.pricingHistory.length - 500);
+    }
+    return true;
+  }
+
+  /** Buy one item from the wholesale merchant at base value. Puts it on the
+   *  first empty shelf, else the stockroom. */
+  buyWholesale(itemId: string): boolean {
+    const s = this.state;
+    if (!s.merchant) return false;
+    const idx = s.merchant.stock.findIndex((it) => it.id === itemId);
+    if (idx === -1) return false;
+    const item = s.merchant.stock[idx];
+    if (s.gold < item.baseValue) return false;
+
+    s.gold -= item.baseValue;
+    s.merchant.stock.splice(idx, 1);
+    const empty = s.shelves.findIndex((slot) => slot === null);
+    if (empty !== -1) s.shelves[empty] = item;
+    else s.inventory.push(item);
+    return true;
+  }
+
+  /** Roll the merchant's afternoon stock: a rotating basket of basics. */
+  private updateMerchant(): void {
+    const s = this.state;
+    if (s.phase === "afternoon") {
+      if (!s.merchant || s.merchant.day !== s.day) {
+        const basics = ["iron_sword", "wooden_shield", "leather_armor", "health_potion", "rations", "travelers_cloak", "hunting_bow", "oak_staff", "iron_helmet", "simple_ring"];
+        const count = 4 + (s.day % 3); // 4-6 items, rotating start point
+        const stock = Array.from({ length: count }, (_, i) => makeItem(basics[(s.day * 3 + i) % basics.length]));
+        s.merchant = { day: s.day, stock };
+        this.pushMessage({
+          id: `sys-merchant-${s.day}`,
+          senderId: "system",
+          senderName: "Town",
+          type: "system",
+          content: "The wholesale cart has rolled into the square — restock while it's here.",
+          timestamp: s.timeOfDay,
+          day: s.day,
+        });
+      }
+    } else if (s.merchant) {
+      s.merchant = null; // cart moves on when afternoon ends
+    }
+  }
+
+  /** Failure condition (§5): no gold, nothing to sell, nothing in stock. */
+  private checkGameOver(): void {
+    const s = this.state;
+    if (s.view === "gameover") return;
+    const hasStock = s.shelves.some((it) => it !== null) || s.inventory.length > 0;
+    if (s.gold <= 0 && !hasStock) {
+      s.view = "gameover";
+      s.speed = 0;
+    }
+  }
+
+  /** Manual save; also called automatically at each day rollover. */
+  save(): void {
+    saveGame(this.state);
   }
 
   /** Player accepts a loot offer (Dev B's buy UI calls this). */
@@ -258,6 +349,8 @@ function createInitialState(): GameState {
     messages: [],
     lootOffers: [],
     recentOutcomes: [],
+    merchant: null,
+    pricingHistory: [],
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
