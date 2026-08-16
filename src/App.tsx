@@ -9,6 +9,7 @@ import { clearSave } from "./game/GameStatePersistence";
 import { ChatPanel } from "./ui/ChatPanel";
 import { NightSummary } from "./ui/NightSummary";
 import { OfflineSummary } from "./ui/OfflineSummary";
+import { SettingsPanel } from "./ui/SettingsPanel";
 import { Toasts } from "./ui/Toasts";
 import { GameOverView } from "./views/GameOverView";
 import { TownView } from "./views/TownView";
@@ -48,6 +49,7 @@ export default function App() {
   };
 
   useGameAudio(engine);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [muted, setMuted] = useState(sound.isMuted);
   const toggleMute = () => {
     const next = !muted;
@@ -75,6 +77,9 @@ export default function App() {
           Day {hud.day} · {hud.phase}
         </div>
         <div className="hud-controls">
+          <button onClick={() => setSettingsOpen(true)} title="Settings">
+            ⚙
+          </button>
           <button
             className={muted ? "" : "active"}
             onClick={toggleMute}
@@ -102,6 +107,7 @@ export default function App() {
       {/* The stage is exactly as wide as the canvas, so overlays (night
           summary, chat) sit over the game rather than the whole window. */}
       <main key={run} style={{ position: "relative", maxWidth: WORLD_W, margin: "0 auto", width: "100%" }}>
+        {settingsOpen && <SettingsPanel engine={engine} onClose={() => setSettingsOpen(false)} />}
         <OfflineSummary engine={engine} />
         <NightSummary engine={engine} />
         {view !== "gameover" && <Toasts engine={engine} />}
