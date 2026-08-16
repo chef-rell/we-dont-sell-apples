@@ -1,7 +1,9 @@
 // Shop View: interior selling scene (spec §3b) — shelves of stock, a counter,
 // and the shopkeeper. Owns its own canvas + rAF loop and keeps the sim ticking
 // while the player is inside. Clicking a shelf item opens the Moonlighter
-// pricing panel (§6); live in-shop customers arrive in a later Phase 2 PR.
+// pricing panel (§6), and adventurers who are browsing or buying show up in
+// the aisle. Reaction bubbles over their heads need the shelf item they're
+// examining, which the engine keeps private today — see issue #12.
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
@@ -22,6 +24,14 @@ const GRID_X = 120; // left of the first column
 const GRID_Y = 96; // top of the first row
 const ICON_SCALE = 2; // shelf icons drawn at 2× for readability
 const ICON_PX = ICON_CELL * PX * ICON_SCALE; // on-screen icon footprint
+
+// Where customers stand: the open floor in front of the counter, one spot per
+// shelf column. Beyond four, they queue up a row further back (drawn first, so
+// the front row overlaps them) offset half a slot, keeping a crowd readable.
+const CHAR_H = 64; // drawCharacter's sprite height in world px
+const AISLE_FRONT_Y = 620; // feet line, front row
+const AISLE_BACK_Y = 584; // feet line, back row
+const CUSTOMER_SPOT_X = [0, 1, 2, 3].map((col) => slotRect(col, 0).x + SLOT_W / 2);
 
 export function ShopView({ engine, onLeave }: { engine: GameEngine; onLeave: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -224,6 +234,42 @@ export function renderShop(
   rect(ctx, WORLD_W / 2 - 180, counterY, 360, PX, PALETTE.wood[1]); // highlight
   rect(ctx, WORLD_W / 2 - 180, counterY + 40, 360, 24, "#4a3220"); // counter front
 
+  // ---- Customers ----
+  // Sorted by id so a customer keeps the same spot frame to frame. Drawn after
+  // the counter: they're on the near side of it, browsing the room.
+  const customers = s.adventurers
+    .filter((a) => a.alive && (a.state === "browsing" || a.state === "buying"))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  const idleFrame = (Math.floor(performance.now() / 500) % 2) as 0 | 1;
+  const lanes = CUSTOMER_SPOT_X.length;
+
+  // Back row first so the front row overlaps it.
+  const indices = [...customers.keys()];
+  const drawOrder = [...indices.filter((i) => i >= lanes), ...indices.filter((i) => i < lanes)];
+  for (const i of drawOrder) {
+    const a = customers[i];
+    const back = i >= lanes;
+    const x = CUSTOMER_SPOT_X[i % lanes] + (back ? SLOT_W / 2 : 0);
+    const feetY = back ? AISLE_BACK_Y : AISLE_FRONT_Y;
+    const headY = feetY - CHAR_H;
+
+    rect(ctx, x - 16, feetY - PX, 32, PX, "#2c1f18"); // floor shadow
+    drawCharacter(ctx, a, x - 20, headY, idleFrame);
+
+    ctx.font = `${3 * PX}px monospace`;
+    ctx.textAlign = "center";
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillText(a.name, x, headY - 10);
+
+    // A coin over a buyer's head — the engine has already decided the sale
+    // (§6: rendering draws the verdict, it never computes one).
+    if (a.state === "buying") {
+      rect(ctx, x - 6, headY - 32, 12, 12, PALETTE.gold);
+      rect(ctx, x - 6, headY - 32, 12, PX, "#f4dc9a");
+    }
+  }
+  ctx.textAlign = "left";
+
   // ---- Sign ----
   ctx.font = `${5 * PX}px monospace`;
   ctx.textAlign = "center";
@@ -232,8 +278,17 @@ export function renderShop(
   ctx.font = `${3 * PX}px monospace`;
   ctx.fillStyle = PALETTE.textDim;
   ctx.fillText("Day " + s.day + " · " + s.phase, WORLD_W / 2, 74);
-  if (selectedSlot === null) {
-    ctx.fillText("click an item to price it", WORLD_W / 2, WORLD_H - 24);
+  // One status line under the sign: who's in the shop, or the pricing hint.
+  // (It lives up here now — the floor below the counter belongs to customers.)
+  if (customers.length > 0) {
+    ctx.fillStyle = PALETTE.gold;
+    ctx.fillText(
+      `${customers.length} ${customers.length === 1 ? "customer" : "customers"} in the shop`,
+      WORLD_W / 2,
+      96,
+    );
+  } else if (selectedSlot === null) {
+    ctx.fillText("click an item to price it", WORLD_W / 2, 96);
   }
   ctx.textAlign = "left";
 }
