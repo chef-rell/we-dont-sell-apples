@@ -63,9 +63,13 @@ describe("economic loop", () => {
 describe("loot loop", () => {
   it("adventures produce outcomes and loot offers get bought", () => {
     const e = freshEngine();
+    // Deep pockets: this test is about the loot loop's plumbing, not
+    // affordability — with starting gold, a run of pricey early offers
+    // could block every accept and flake (~1/12 under the party system).
+    e.state.gold = 5000;
     for (const it of e.state.shelves) if (it) e.setPrice(it.id, Math.round(it.baseValue * 1.2));
     let bought = 0;
-    runDays(e, 6, (eng) => {
+    runDays(e, 8, (eng) => {
       for (const o of [...eng.state.lootOffers]) {
         if (eng.acceptLootOffer(o.id)) bought++;
       }
@@ -612,6 +616,7 @@ describe("wipe stabilizer (#76, spec V2.6)", () => {
         lootItemKeys: [],
         goldFound: 0,
         brokenItems: [],
+        narration: null,
       });
     }
     e["replacementDueDay"] = e.state.day + 1; // wave due at the next rollover
