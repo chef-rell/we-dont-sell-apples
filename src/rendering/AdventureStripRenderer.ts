@@ -25,6 +25,7 @@ import { shade } from "./iso";
 import { drawMonster, MONSTER_CELL } from "./MonsterRenderer";
 import { Particles } from "./Particles";
 import { hash2d, rect } from "./PixelRenderer";
+import { lightningFlash, weatherTint } from "./WeatherFX";
 import { ITEM_DEFS } from "../entities/Item";
 import type {
   Adventurer,
@@ -37,6 +38,7 @@ import type {
   Helper,
   ItemCategory,
   ItemRarity,
+  WeatherKind,
 } from "../types";
 import { DAY_SKY, PALETTE, PHASE_BOUNDS, PX, STRIP_H, WORLD_W } from "../utils/constants";
 
@@ -81,18 +83,32 @@ export function renderStrip(ctx: CanvasRenderingContext2D, state: GameState, now
   const deltaMs = lastNow === null ? 0 : Math.min(now - lastNow, 100);
   lastNow = now;
 
-  const script = state.currentScript;
-  const scriptId = script?.id ?? null;
+  // Which script (if any) is this frame's to play — the day's party script
+  // during afternoon/evening, or last night's raid script (spec V2.15's
+  // "the strip [Phase 5b] can play it back during the FOLLOWING night
+  // phase") once phase flips to night. The two never overlap in real time
+  // within a day, so the module-scoped animator state below (firedEvents,
+  // particles, labels...) can track whichever one is active by id, exactly
+  // like it always tracked state.currentScript alone.
+  const activeScript = state.phase === "night" ? state.nightScript : state.currentScript;
+  const scriptId = activeScript?.id ?? null;
   if (scriptId !== trackedScriptId) resetAnimator(scriptId);
 
-  drawSky(ctx, state.phase);
+  drawSky(ctx, state.phase, state.weather);
   drawTerrain(ctx, state.day);
   drawPath(ctx, now);
   drawClouds(ctx, now);
 
-  const playingScript = script !== null && (state.phase === "afternoon" || state.phase === "evening");
-  if (playingScript) {
-    playScript(ctx, state, script!, now);
+  const playingDayScript = state.currentScript !== null && (state.phase === "afternoon" || state.phase === "evening");
+  const playingNightScript = state.phase === "night" && state.nightScript !== null;
+  if (playingDayScript) {
+    playScript(ctx, state, state.currentScript!, now);
+  } else if (playingNightScript) {
+    // Night raids (spec V2.9/Phase-2 deferral, issue #94, unblocked here):
+    // same AdventureScript machinery as the day script, just read from
+    // `state.nightScript` and mapped onto the night phase's own time
+    // window instead of afternoon/evening's — see playNightScript() below.
+    playNightScript(ctx, state, state.nightScript!, now);
   } else if (state.phase !== "night") {
     drawBirds(ctx, now);
   }
@@ -102,13 +118,21 @@ export function renderStrip(ctx: CanvasRenderingContext2D, state: GameState, now
   drawFlashes(ctx, now);
   drawLabels(ctx, now);
 
-  // Night raids reuse the same AdventureScript machinery (spec V2.5) but
-  // aren't stored on GameState.currentScript (AdventurerBehavior.
-  // resolveNightRun keeps them local to the resolving member), so there is
-  // nothing here to play back tonight — a deliberate Phase 2 scope cut, see
-  // WDSA-v2-spec.md V2.15. Just tint what's already drawn.
+  // Dark tint over whatever just played (script or ambient) — the raid, if
+  // any, plays out UNDER this tint (spec: "under a dark tint"), same as the
+  // day script plays under full daylight.
   if (state.phase === "night") {
     rect(ctx, 0, 0, WORLD_W, STRIP_H, "rgba(6,8,20,0.58)");
+  }
+
+  // Storm lightning (spec V2.9's weather layer): a brief full-panel
+  // brighten, drawn last so it reads as a flash cutting through the night
+  // tint above rather than being muted by it.
+  const flash = lightningFlash(state.weather, now);
+  if (flash > 0) {
+    ctx.globalAlpha = flash * 0.55;
+    rect(ctx, 0, 0, WORLD_W, STRIP_H, "#eef0ff");
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -189,6 +213,53 @@ function playScript(ctx: CanvasRenderingContext2D, state: GameState, script: Adv
   } else {
     drawFallenMarkers(ctx, party, deathTById);
     drawReturnLeg(ctx, party, outcomeById, returnP, now, script.helperAlong, state.helper);
+  }
+}
+
+// Outbound+combat share of the night phase's own window before the return
+// leg takes over — proportioned like PHASE_BOUNDS' afternoon (0.25 span)
+// vs evening (0.20 span), ~55/45, since night runs pack the same march ->
+// encounter(s) -> victory/defeat -> returnMarch shape into their own 0..1
+// timeline (Combat.ts's `night: true` mode only changes threat/reward
+// multipliers, never the event packing) but have no separate "evening"
+// phase of their own to resolve the return leg against.
+const NIGHT_OUT_FRACTION = 0.55;
+
+/** A night owl's solo raid (spec V2.9/Phase-2 deferral, issue #94): almost
+ *  the same shape as playScript() above (a party script, an outbound leg,
+ *  a return leg) just always a party of one and never helper-accompanied
+ *  (resolveNightRun() never passes helper options into
+ *  generateAdventureScript), read from `state.nightScript` and timed
+ *  against the night phase's own window instead of afternoon/evening's. */
+function playNightScript(ctx: CanvasRenderingContext2D, state: GameState, script: AdventureScript, now: number): void {
+  const [nLo, nHi] = PHASE_BOUNDS.night;
+  const outEnd = nLo + (nHi - nLo) * NIGHT_OUT_FRACTION;
+  const outboundP = clamp((state.timeOfDay - nLo) / (outEnd - nLo), 0, 1);
+  const returning = state.timeOfDay >= outEnd;
+  const returnP = returning ? clamp((state.timeOfDay - outEnd) / (nHi - outEnd), 0, 1) : 0;
+
+  const party = script.partyIds
+    .map((id) => state.adventurers.find((a) => a.id === id))
+    .filter((a): a is Adventurer => a !== undefined);
+  const outcomeById = new Map(script.memberOutcomes.map((o) => [o.adventurerId, o] as const));
+  const deathTById = new Map<string, number>();
+  for (const ev of script.events) {
+    if (ev.type === "death" && ev.actorId) deathTById.set(ev.actorId, ev.t);
+  }
+  const encounterTs = script.events.filter((e) => e.type === "encounter").map((e) => e.t);
+
+  processEvents(script, outboundP, now);
+
+  if (!returning) {
+    drawOutboundLeg(ctx, party, deathTById, encounterTs, script, outboundP, now, null);
+  } else {
+    drawFallenMarkers(ctx, party, deathTById);
+    // helper=null unconditionally: resolveNightRun() never passes helper
+    // options into generateAdventureScript, so script.helperAlong is always
+    // false in practice — read here anyway (rather than hardcoded false)
+    // so this stays correct if that ever changes; drawReturnLeg no-ops the
+    // helper-marcher branch whenever `helper` is null either way.
+    drawReturnLeg(ctx, party, outcomeById, returnP, now, script.helperAlong, null);
   }
 }
 
@@ -564,8 +635,8 @@ function drawLabels(ctx: CanvasRenderingContext2D, now: number): void {
 
 // ---------- Terrain (always drawn — the strip is never a dead panel) ----------
 
-function drawSky(ctx: CanvasRenderingContext2D, phase: DayPhase): void {
-  const base = DAY_SKY[phase];
+function drawSky(ctx: CanvasRenderingContext2D, phase: DayPhase, weather: WeatherKind): void {
+  const base = weatherTint(DAY_SKY[phase], weather); // spec: "strip tints to match" the town's weather
   rect(ctx, 0, 0, WORLD_W, SKY_H, base);
   rect(ctx, 0, SKY_H, WORLD_W, GROUND_Y - SKY_H, shade(base, -0.12));
 }

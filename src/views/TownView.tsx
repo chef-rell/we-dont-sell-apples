@@ -14,13 +14,14 @@ import type { GameEngine } from "../game/GameEngine";
 import { skyTint } from "../game/DayNightCycle";
 import { ITEM_DEFS } from "../entities/Item";
 import { CHILD_SPRITE_H, drawCharacter } from "../rendering/CharacterRenderer";
-import { depthKey, drawIsoBlock, isoFacing, project, shade, unproject } from "../rendering/iso";
+import { depthKey, drawIsoBlock, isoFacing, project, shade, unproject, type ScreenPoint } from "../rendering/iso";
 import { hash2d, rect } from "../rendering/PixelRenderer";
 import { Particles } from "../rendering/Particles";
+import { lightningFlash, weatherDarkenAlpha } from "../rendering/WeatherFX";
 import { BuildChip, BuildPanel } from "../ui/BuildPanel";
 import { ForgePanel } from "../ui/ForgePanel";
 import { StaffPanel } from "../ui/StaffPanel";
-import type { AdventurerState, Item, TownBuilding } from "../types";
+import type { Adventurer, AdventurerState, BuildingKind, Item, TownBuilding, WeatherKind } from "../types";
 import { PALETTE, PX, WORLD_H, WORLD_W } from "../utils/constants";
 import { getBuilding, worldPointToBuilding } from "../utils/TownBuildings";
 
@@ -191,6 +192,7 @@ interface BuildingVisual {
   roofH: number;
   roofColor: string;
   label?: string;
+  kind: BuildingKind; // ambience hooks (window flicker, chimney smoke, spec V2.9 issue #95) key off this
 }
 
 /** Visual box per building kind. Tavern/house reuse their registry
@@ -211,6 +213,7 @@ function buildingVisual(b: TownBuilding): BuildingVisual | null {
         roofH: 26,
         roofColor: PALETTE.gold,
         label: "SHOP",
+        kind: b.kind,
       };
     }
     case "tavern":
@@ -223,6 +226,7 @@ function buildingVisual(b: TownBuilding): BuildingVisual | null {
         roofH: 22,
         roofColor: PALETTE.roofWarm,
         label: "TAVERN",
+        kind: b.kind,
       };
     case "house":
       return {
@@ -233,13 +237,29 @@ function buildingVisual(b: TownBuilding): BuildingVisual | null {
         wallH: 46,
         roofH: 18,
         roofColor: PALETTE.roofs[0],
+        kind: b.kind,
       };
     default:
       return null; // square and gate are drawn separately below
   }
 }
 
-function drawBuildingBlock(ctx: CanvasRenderingContext2D, v: BuildingVisual, night: boolean): void {
+/** Window glow color for a building's face. By day every building reads the
+ *  same flat `windowDark`; at night most buildings hold a steady
+ *  `windowLit`. The tavern is the one exception (spec: "tavern windows
+ *  flicker warm at night") — a soft two-frequency flutter around the same
+ *  base glow rather than a metronomic blink, so it reads as firelight
+ *  rather than a strobing bulb. Ambience only (Math.sin(now)-driven, never
+ *  read back by game logic — CLAUDE.md's determinism-vs-liveliness rule
+ *  only binds §6 verdicts and combat math). */
+function windowGlowColor(kind: BuildingKind, night: boolean, now: number): string {
+  if (!night) return PALETTE.windowDark;
+  if (kind !== "tavern") return PALETTE.windowLit;
+  const flicker = Math.sin(now / 210) * 0.14 + Math.sin(now / 67 + 1.7) * 0.08;
+  return shade(PALETTE.windowLit, flicker);
+}
+
+function drawBuildingBlock(ctx: CanvasRenderingContext2D, v: BuildingVisual, night: boolean, now: number): void {
   const wallBase = PALETTE.walls[0];
   drawIsoBlock(ctx, v.x, v.y, v.w, v.h, v.wallH, wallBase);
 
@@ -250,10 +270,11 @@ function drawBuildingBlock(ctx: CanvasRenderingContext2D, v: BuildingVisual, nig
   ctx.fillStyle = shade(wallBase, -0.6);
   ctx.fillRect(pS.sx - dw / 2, pS.sy - dh, dw, dh);
 
-  // Windows: one on each visible face, glowing at night.
+  // Windows: one on each visible face, glowing at night (flickering warm
+  // for the tavern specifically — see windowGlowColor()).
   const pE = project(v.x + v.w, v.y);
   const pW = project(v.x, v.y + v.h);
-  const glow = night ? PALETTE.windowLit : PALETTE.windowDark;
+  const glow = windowGlowColor(v.kind, night, now);
   const winSize = 6;
   const winLift = v.wallH * 0.55;
   ctx.fillStyle = glow;
@@ -470,6 +491,309 @@ function drawForge(ctx: CanvasRenderingContext2D, b: TownBuilding, night: boolea
   }
 }
 
+// ---------- Competitor stores (spec V2.10, issue #95) ----------
+//
+// "Deliberately shallow" (V2.10) presentation to match the shallow engine:
+// a distinct muted-roof block + a plain hanging sign, never the player
+// shop's gold roof or glowing window — a rival's storefront should read as
+// "open, but not yours" at a glance. `defaultCompetitors()`'s two stores sit
+// in open sky (TownBuildings.ts's own occlusion-check comment), so no
+// special-casing is needed here beyond the generic depth-sorted push.
+
+const COMPETITOR_WALL_H = 44;
+const COMPETITOR_ROOF_H = 16;
+const COMPETITOR_FLASH_MS = 900;
+
+// storeId -> till value last observed, so an increase (an adventurer's
+// purchase landing) can trigger the "lost sale" flash exactly once per
+// purchase rather than every frame the till stays elevated (spec: "poll
+// competitors[].till changes... renderer stays read-only" — this never
+// writes back to GameState). `undefined` (first poll ever, or a save
+// loaded mid-day with a nonzero starting till) deliberately does NOT flash
+// — only a same-session increase does. Module-scoped, same idiom as every
+// other ambient-state tracker in this file.
+const lastTillByStore = new Map<string, number>();
+const competitorFlashUntil = new Map<string, number>();
+const competitorFlashParticles = new Particles();
+
+/** Call once per frame (not per-building-draw) to detect a till increase and
+ *  arm that store's flash + a small red coin burst — a "lost sale" read,
+ *  distinct in color from every other coin effect in this game (which are
+ *  always gold), since this coin left town through someone else's door. */
+function pollCompetitorPurchases(buildings: TownBuilding[], competitors: { id: string; till: number }[], now: number): void {
+  for (const c of competitors) {
+    const prev = lastTillByStore.get(c.id);
+    if (prev !== undefined && c.till > prev) {
+      competitorFlashUntil.set(c.id, now + COMPETITOR_FLASH_MS);
+      const b = getBuilding(buildings, c.id);
+      const anchor = b?.door ?? (b ? { x: b.footprint.x, y: b.footprint.y } : null);
+      if (anchor) {
+        const p = project(anchor.x, anchor.y);
+        competitorFlashParticles.burst(p.sx, p.sy - 60, {
+          count: 5,
+          colors: ["#c0392b", "#e0644a"],
+          speed: 85,
+          spread: 1,
+          gravity: 150,
+          life: 0.6,
+          size: PX,
+        });
+      }
+    }
+    lastTillByStore.set(c.id, c.till);
+  }
+}
+
+function drawCompetitorFlash(ctx: CanvasRenderingContext2D, storeId: string, anchor: ScreenPoint, now: number): void {
+  const until = competitorFlashUntil.get(storeId);
+  if (!until || until < now) return;
+  const t = 1 - (until - now) / COMPETITOR_FLASH_MS;
+  ctx.globalAlpha = Math.max(0, 1 - t);
+  const y = anchor.sy - 66 - t * 16;
+  rect(ctx, anchor.sx - 5, y, PX * 2, PX * 2, "#c0392b");
+  rect(ctx, anchor.sx - 5, y, PX * 2, PX / 2, "#e0644a");
+  ctx.fillStyle = "#f0b0a0";
+  ctx.font = `${2.5 * PX}px monospace`;
+  ctx.textAlign = "center";
+  ctx.fillText("−g", anchor.sx, y - 4);
+  ctx.textAlign = "left";
+  ctx.globalAlpha = 1;
+}
+
+function drawCompetitorStore(ctx: CanvasRenderingContext2D, b: TownBuilding, night: boolean, now: number): void {
+  const { x, y, w, h } = b.footprint;
+  const wallColor = PALETTE.walls[1]; // paler than the player shop's walls[0] — visibly "not yours"
+  drawIsoBlock(ctx, x, y, w, h, COMPETITOR_WALL_H, wallColor);
+
+  // Muted roof: plain stone gray, never the player shop's gold (spec:
+  // "distinct muted-roof buildings").
+  const overhang = 6;
+  drawIsoBlock(
+    ctx,
+    x - overhang,
+    y - overhang,
+    w + overhang * 2,
+    h + overhang * 2,
+    COMPETITOR_ROOF_H,
+    PALETTE.stone[1],
+    COMPETITOR_WALL_H,
+  );
+
+  // A plain hanging sign — a shingle, not a shop window display.
+  const anchor = b.door ?? { x: x + w / 2, y: y + h };
+  const p = project(anchor.x, anchor.y);
+  const signY = p.sy - COMPETITOR_WALL_H - COMPETITOR_ROOF_H - 12;
+  rect(ctx, p.sx - 8, signY, 16, 8, shade(wallColor, -0.45));
+  rect(ctx, p.sx - 6, signY + 2, 12, 3, PALETTE.textDim);
+
+  // One dim window — never warmly lit like the player's own buildings.
+  const pS = project(x + w, y + h);
+  const pE = project(x + w, y);
+  const winSize = 6;
+  const winLift = COMPETITOR_WALL_H * 0.55;
+  ctx.fillStyle = night ? shade(PALETTE.windowDark, 0.12) : PALETTE.windowDark;
+  ctx.fillRect((pS.sx + pE.sx) / 2 - winSize / 2, (pS.sy + pE.sy) / 2 - winLift - winSize / 2, winSize, winSize);
+
+  drawCompetitorFlash(ctx, b.id, p, now);
+}
+
+// ---------- Graveyard (spec V2.9, issue #95) ----------
+//
+// Flat plot — TownBuildings.ts's own comment: "flat headstones, not a tall
+// structure — no occlusion risk either way." Fenced diamond, gravestone
+// rects filling left-to-right rows as state.stats.adventurersLost grows,
+// capped at GRAVEYARD_STONE_CAP with a "..." mound standing in for the
+// overflow (the underlying count is never capped, only how many individual
+// stones get drawn — a hundred-day run doesn't need a hundred rects).
+
+const GRAVEYARD_COLS = 6;
+const GRAVEYARD_ROWS = 4;
+const GRAVEYARD_STONE_CAP = GRAVEYARD_COLS * GRAVEYARD_ROWS; // 24
+
+function drawGraveyard(ctx: CanvasRenderingContext2D, b: TownBuilding, adventurersLost: number): void {
+  const { x, y, w, h } = b.footprint;
+
+  // Untended ground — duller than the town's regular lawn.
+  fillIsoQuad(ctx, x, y, w, h, shade(PALETTE.grass[0], -0.25));
+
+  // Low fence: posts at the diamond's four projected corners, a thin rail
+  // between them — decoration on an already-shaded flat fill, the same
+  // allowance ground tiles get under spec V2.4's "no unshaded flat rect"
+  // rule.
+  const corners = [project(x, y), project(x + w, y), project(x + w, y + h), project(x, y + h)];
+  const postH = 10;
+  for (const c of corners) rect(ctx, c.sx - 1, c.sy - postH, 2, postH, "#3d382e");
+  ctx.strokeStyle = "#5a5040";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i];
+    const nxt = corners[(i + 1) % corners.length];
+    ctx.moveTo(a.sx, a.sy - postH * 0.6);
+    ctx.lineTo(nxt.sx, nxt.sy - postH * 0.6);
+  }
+  ctx.stroke();
+
+  const shown = Math.min(adventurersLost, GRAVEYARD_STONE_CAP);
+  const cellW = w / GRAVEYARD_COLS;
+  const cellH = h / GRAVEYARD_ROWS;
+  for (let i = 0; i < shown; i++) {
+    const col = i % GRAVEYARD_COLS;
+    const row = Math.floor(i / GRAVEYARD_COLS);
+    const gx = x + (col + 0.5) * cellW;
+    const gy = y + (row + 0.5) * cellH;
+    drawIsoBlock(ctx, gx - 3, gy - 2, 6, 4, 10, PALETTE.stone[1]);
+  }
+
+  if (adventurersLost > GRAVEYARD_STONE_CAP) {
+    const mx = x + w - cellW * 0.55;
+    const my = y + h - cellH * 0.55;
+    drawIsoBlock(ctx, mx - 5, my - 4, 10, 8, 7, shade(PALETTE.dirt[0], -0.25));
+    const p = project(mx, my);
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.font = `${2.5 * PX}px monospace`;
+    ctx.textAlign = "center";
+    ctx.fillText("…", p.sx, p.sy - 15);
+    ctx.textAlign = "left";
+  }
+}
+
+/** True while `a` is standing still inside (or just at the edge of) the
+ *  graveyard plot — the newcomer arrival-day waypoint (spec V2.9, issue
+ *  #94's `bc.graveyardWaypoint`) reads as a walk there followed by a hold,
+ *  same as every other wander-target arrival; this is a read-only render-
+ *  side approximation of "are they paused there right now" (position +
+ *  `!moving`) rather than reading the engine's internal BehaviorContext,
+ *  which the renderer never touches. */
+function atGraveyard(a: Adventurer, graveyard: TownBuilding | undefined): boolean {
+  if (!graveyard || a.position.moving) return false;
+  const { x, y, w, h } = graveyard.footprint;
+  const pad = 36;
+  return (
+    a.position.x >= x - pad && a.position.x <= x + w + pad && a.position.y >= y - pad && a.position.y <= y + h + pad
+  );
+}
+
+// ---------- Reputation stars (spec V2.9, issue #95) ----------
+
+function drawReputationStars(ctx: CanvasRenderingContext2D, v: BuildingVisual, reputation: number): void {
+  const stars = Math.max(0, Math.min(5, Math.round(((reputation + 1) / 2) * 5)));
+  const top = project(v.x + v.w / 2, v.y + v.h / 2);
+  const labelY = top.sy - v.wallH - v.roofH - 6; // matches the "SHOP" label's own baseline
+  const y = labelY - 3 * PX - 3;
+  const glyphs = "★★★★★".slice(0, stars) + "☆☆☆☆☆".slice(0, 5 - stars);
+  ctx.fillStyle = PALETTE.gold;
+  ctx.font = `${3 * PX}px monospace`;
+  ctx.textAlign = "center";
+  ctx.fillText(glyphs, top.sx, y);
+  ctx.textAlign = "left";
+}
+
+// ---------- Ambience: chimney smoke (spec V2.9, issue #95) ----------
+
+const smokeParticles = new Particles();
+
+/** Roof-peak-ish anchor for a smoke wisp — offset toward one corner so it
+ *  doesn't spawn dead center over the ridge line. */
+function chimneyAnchor(v: BuildingVisual): ScreenPoint {
+  const p = project(v.x + v.w * 0.74, v.y + v.h * 0.22);
+  return { sx: p.sx, sy: p.sy - v.wallH - v.roofH - 2 };
+}
+
+/** Sparse smoke wisps from shop/tavern/house chimneys. Houses and the shop
+ *  go quiet overnight (spec: "gated off at night for houses" — the shop's
+ *  hearth is read the same way here, a judgment call, since it keeps no
+ *  night staff either); the tavern keeps smoking through the night (spec:
+ *  "always for tavern" — it's the one building that's busiest after dark).
+ *  Math.random() gate, pure ambience (CLAUDE.md's determinism-vs-liveliness
+ *  rule). */
+function maybeEmitChimneySmoke(kind: BuildingKind, v: BuildingVisual, night: boolean): void {
+  if (kind !== "shop" && kind !== "tavern" && kind !== "house") return;
+  if (night && kind !== "tavern") return;
+  if (Math.random() > 0.025) return;
+  const a = chimneyAnchor(v);
+  smokeParticles.burst(a.sx, a.sy, {
+    count: 1,
+    colors: ["#cfd0c8", "#e8e6da", "#b8bcae"],
+    speed: 9,
+    spread: 0.5,
+    gravity: -13, // wisps rise
+    life: 1.7,
+    size: PX,
+  });
+}
+
+// ---------- Ambience: weather overlays (spec V2.9, issue #95) ----------
+//
+// All Math.random-driven, over the town canvas only — the strip gets its
+// own, much lighter, sky-tint-only treatment (rendering/AdventureStripRenderer
+// .ts's drawSky), and both read state.weather, never decide it (that's
+// game/Weather.ts's job, rolled once at rollover).
+
+interface RainDrop {
+  x: number;
+  y: number;
+  len: number;
+  speed: number;
+}
+
+let rainDrops: RainDrop[] = [];
+
+function spawnRainDrop(): RainDrop {
+  return {
+    x: Math.random() * WORLD_W,
+    y: -20 - Math.random() * WORLD_H,
+    len: 8 + Math.random() * 10,
+    speed: 240 + Math.random() * 140,
+  };
+}
+
+function updateAndDrawRain(ctx: CanvasRenderingContext2D, weather: WeatherKind, deltaMs: number): void {
+  if (weather !== "rain" && weather !== "storm") {
+    rainDrops = [];
+    return;
+  }
+  const target = weather === "storm" ? 90 : 42;
+  while (rainDrops.length < target) rainDrops.push(spawnRainDrop());
+  if (rainDrops.length > target) rainDrops.length = target;
+
+  const dt = deltaMs / 1000;
+  const color = weather === "storm" ? "rgba(190,205,225,0.45)" : "rgba(200,215,230,0.32)";
+  for (const d of rainDrops) {
+    d.y += d.speed * dt;
+    d.x -= d.speed * 0.12 * dt; // a slight wind-driven slant
+    if (d.y > WORLD_H + 20) {
+      d.y = -20 - Math.random() * 60;
+      d.x = Math.random() * WORLD_W;
+    }
+    rect(ctx, d.x, d.y, PX / 2, d.len, color);
+  }
+}
+
+/** Fog wash + storm darkening/flash, layered on top of everything already
+ *  painted (spec: "fog wash (translucent band), storm darkening +
+ *  occasional flash"). Rain has no separate overlay of its own beyond the
+ *  streaks above — a wash would just muddy them. */
+function drawWeatherOverlay(ctx: CanvasRenderingContext2D, weather: WeatherKind, now: number): void {
+  if (weather === "fog") {
+    ctx.globalAlpha = 0.22;
+    rect(ctx, 0, 0, WORLD_W, WORLD_H, "#c3c9cc");
+    ctx.globalAlpha = 1;
+  }
+  const darken = weatherDarkenAlpha(weather);
+  if (darken > 0) {
+    ctx.globalAlpha = darken;
+    rect(ctx, 0, 0, WORLD_W, WORLD_H, "#0a0a14");
+    ctx.globalAlpha = 1;
+  }
+  const flash = lightningFlash(weather, now);
+  if (flash > 0) {
+    ctx.globalAlpha = flash * 0.5;
+    rect(ctx, 0, 0, WORLD_W, WORLD_H, "#eef0ff");
+    ctx.globalAlpha = 1;
+  }
+}
+
 // ---------- main render ----------
 
 // Sweep animation for the shop's helper: dust flecks are cosmetic ambience
@@ -495,6 +819,9 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
   lastFrameTime = now;
   helperDustParticles.update(deltaMs);
   craftFleckParticles.update(deltaMs);
+  smokeParticles.update(deltaMs);
+  competitorFlashParticles.update(deltaMs);
+  pollCompetitorPurchases(buildings, s.competitors, now);
 
   // Backdrop behind the projected diamond (the world's four corners don't
   // reach the canvas's four corners — see iso.ts's header comment).
@@ -544,13 +871,21 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
     const v = buildingVisual(b);
     if (v) {
       const key = depthKey(v.x + v.w / 2, v.y + v.h / 2);
-      drawables.push({ key, draw: () => drawBuildingBlock(ctx, v, night) });
+      drawables.push({
+        key,
+        draw: () => {
+          drawBuildingBlock(ctx, v, night, now);
+          if (v.kind === "shop") drawReputationStars(ctx, v, s.reputation);
+          maybeEmitChimneySmoke(v.kind, v, night);
+        },
+      });
       continue;
     }
-    // Craft buildings (garden/alchemy_lab/forge, spec V2.9/issue #92): not
-    // handled by buildingVisual()/drawBuildingBlock — bespoke draw
-    // functions above, inserted into this same depth-sorted list so they
-    // clip correctly against characters/trees walking past.
+    // Craft buildings (garden/alchemy_lab/forge, spec V2.9/issue #92) and
+    // the v2.10/v2.9 competitor stores + graveyard (issue #95): not handled
+    // by buildingVisual()/drawBuildingBlock — bespoke draw functions above,
+    // inserted into this same depth-sorted list so they clip correctly
+    // against characters/trees walking past.
     const key = depthKey(b.footprint.x + b.footprint.w / 2, b.footprint.y + b.footprint.h / 2);
     if (b.kind === "garden") {
       drawables.push({ key, draw: () => drawGardenPlot(ctx, b.footprint, s.inventory) });
@@ -558,6 +893,10 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
       drawables.push({ key, draw: () => drawAlchemyLab(ctx, b) });
     } else if (b.kind === "forge") {
       drawables.push({ key, draw: () => drawForge(ctx, b, night) });
+    } else if (b.kind === "competitor_store") {
+      drawables.push({ key, draw: () => drawCompetitorStore(ctx, b, night, now) });
+    } else if (b.kind === "graveyard") {
+      drawables.push({ key, draw: () => drawGraveyard(ctx, b, s.stats.adventurersLost) });
     }
   }
 
@@ -605,6 +944,7 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
   // away that nothing is happening out there (§2/§17).
   const walkFrame: 0 | 1 = Math.floor(now / 180) % 2 === 0 ? 0 : 1;
   const alive = s.adventurers.filter((a) => a.alive && IN_TOWN.includes(a.state));
+  const graveyard = getBuilding(buildings, "graveyard");
   for (const a of alive) {
     const key = depthKey(a.position.x, a.position.y);
     drawables.push({
@@ -616,7 +956,14 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
         const { sx, sy } = project(a.position.x, a.position.y);
         const drawX = sx - 20;
         const drawY = sy - 64;
-        drawCharacter(ctx, a, drawX, drawY, a.position.moving ? walkFrame : 0, isoFacing(a.position.facing));
+        // Newcomer graveyard waypoint (spec V2.9, issue #94/#95): the
+        // walk-pause IS the hold — a.position.moving is already false while
+        // they're standing there, which already forces walkFrame 0 below.
+        // The one thing to add is a bowed-head READ: face them down toward
+        // the stones instead of whatever direction they last walked in.
+        const paused = atGraveyard(a, graveyard);
+        const facing = paused ? "down" : a.position.facing;
+        drawCharacter(ctx, a, drawX, drawY, a.position.moving ? walkFrame : 0, isoFacing(facing));
         ctx.fillStyle = PALETTE.textLight;
         ctx.font = `${2.5 * PX}px monospace`;
         ctx.textAlign = "center";
@@ -753,6 +1100,8 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
   for (const d of drawables) d.draw();
   helperDustParticles.draw(ctx);
   craftFleckParticles.draw(ctx);
+  smokeParticles.draw(ctx);
+  competitorFlashParticles.draw(ctx);
 
   // Day/night tint over everything — same technique as the old flat view:
   // a translucent overlay darkens every tile/face tone already painted, and
@@ -764,4 +1113,11 @@ function render(ctx: CanvasRenderingContext2D, engine: GameEngine, now: number) 
     rect(ctx, 0, 0, WORLD_W, WORLD_H, tint.color);
     ctx.globalAlpha = 1;
   }
+
+  // Weather layer (spec V2.9/V2.10, issue #95): rain streaks fall over the
+  // whole scene as a foreground layer (drawn after everything else, like
+  // the ambient particle systems above); fog wash / storm darkening /
+  // lightning are flat overlays stacked on top of the day/night tint.
+  updateAndDrawRain(ctx, s.weather, deltaMs);
+  drawWeatherOverlay(ctx, s.weather, now);
 }
