@@ -1,6 +1,6 @@
 // Game balance numbers and shared constants (spec §4, §5, §10)
 
-import type { DayPhase, ItemOrigin, ItemRarity } from "../types";
+import type { DayPhase, ItemOrigin, ItemRarity, WeatherKind } from "../types";
 
 // ---------- Time (spec §4) ----------
 export const DAY_LENGTH_MS = 10 * 60 * 1000; // 10 real minutes at 1×
@@ -148,3 +148,40 @@ export const REPAIR_COST_RATIO = 0.35; // repairCost = round(this * current base
 export const REPAIR_MAX_TIMES = 3; // timesRepaired must stay < this to repair again
 export const REPAIR_DURABILITY_DECAY = 0.15; // each repair shrinks maxDurability by this fraction
 export const PREFERS_REPAIR_REPLACEMENT_RATIO = 0.45; // repair iff cost < this * replacement value
+
+// ---------- Weather (spec V2.9, issue #94) ----------
+
+// Rolled once at rollover (game/Weather.ts's rollWeather); order matters —
+// bands are cumulative in this order (clear, rain, fog, storm).
+export const WEATHER_WEIGHTS: Record<WeatherKind, number> = {
+  clear: 0.55,
+  rain: 0.2,
+  fog: 0.15,
+  storm: 0.1,
+} as const;
+
+// Threat multipliers read into Combat.ts's generateAdventureScript ONLY
+// (matches issue #90's precedent of scoping new combat math to the v2
+// script path, not the v1 resolveAdventure() fallback).
+export const WEATHER_THREAT_MULT: Record<WeatherKind, number> = {
+  clear: 1,
+  rain: 1.15,
+  fog: 1.25,
+  storm: 1, // storm days never form a party (no party forms) — never read in practice
+} as const;
+
+// ---------- NPC competitor stores (spec V2.10, issue #94) ----------
+
+// Prices at 1.5-1.9x base value (spec V2.10: "they perform poorly by
+// default") — two fixed stores, deliberately different so one reads as
+// "less bad" than the other.
+export const COMPETITOR_PRICE_LEVELS = [1.6, 1.85] as const;
+// Rotating stock re-rolled every N days (deterministic from day + store id).
+export const COMPETITOR_STOCK_ROTATION_DAYS = 2;
+// An adventurer who's found nothing affordable this many consecutive shop
+// trips heads to a competitor instead of wandering (spec V2.10).
+export const COMPETITOR_NOTHING_AFFORDABLE_TRIGGER = 2;
+// Gold recycling (spec V2.9): each rollover, every till's balance splits
+// across the poorest this fraction of the (alive) town — "the town spends
+// its money in town," never touching the player's ledger.
+export const COMPETITOR_RECYCLE_POOREST_FRACTION = 0.5;

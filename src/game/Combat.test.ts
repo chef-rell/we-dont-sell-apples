@@ -540,3 +540,47 @@ describe("generateAdventureScript vigor HP buffer (+5 maxHp while equipped)", ()
     expect(vigorSurvivals).toBeGreaterThan(plainSurvivals); // the buffer should flip at least one seed over 150 trials
   });
 });
+
+describe("generateAdventureScript weather threat multiplier (spec V2.9, issue #94)", () => {
+  it("omitting opts.weather is byte-identical to explicitly passing 'clear' (×1, a no-op)", () => {
+    const partyA = partyFixture(3);
+    const partyB = structuredClone(partyA);
+    const scriptDefault = generateAdventureScript(partyA, 10, { seed: 55 }, makeRng(55));
+    const scriptClear = generateAdventureScript(partyB, 10, { seed: 55, weather: "clear" }, makeRng(55));
+    expect(scriptDefault).toEqual(scriptClear);
+  });
+
+  it("rain (×1.15) then fog (×1.25) monotonically raise threat vs clear — fewer wins, more damage taken", () => {
+    // A borderline-power solo adventurer (power close enough to threat that
+    // the weather multiplier actually flips some encounters) aggregated
+    // across many FIXED seeds — deterministic (no unseeded randomness),
+    // same shape as the vigor-buffer test above.
+    const fixture = () => {
+      const a = partyFixture(1)[0];
+      a.level = 2;
+      a.hp = 60;
+      a.maxHp = 60;
+      a.equipment.armor = undefined;
+      a.equipment.accessory = undefined;
+      return [a];
+    };
+    let clearWins = 0, rainWins = 0, fogWins = 0;
+    let clearDmg = 0, rainDmg = 0, fogDmg = 0;
+    const trials = 60;
+    for (let seed = 0; seed < trials; seed++) {
+      const sc = generateAdventureScript(fixture(), 10, { seed, weather: "clear" }, makeRng(seed));
+      const sr = generateAdventureScript(fixture(), 10, { seed, weather: "rain" }, makeRng(seed));
+      const sf = generateAdventureScript(fixture(), 10, { seed, weather: "fog" }, makeRng(seed));
+      if (sc.memberOutcomes[0].monsterDefeated) clearWins++;
+      if (sr.memberOutcomes[0].monsterDefeated) rainWins++;
+      if (sf.memberOutcomes[0].monsterDefeated) fogWins++;
+      clearDmg += sc.memberOutcomes[0].damageTaken;
+      rainDmg += sr.memberOutcomes[0].damageTaken;
+      fogDmg += sf.memberOutcomes[0].damageTaken;
+    }
+    expect(clearWins).toBeGreaterThan(rainWins);
+    expect(rainWins).toBeGreaterThan(fogWins);
+    expect(clearDmg).toBeLessThan(rainDmg);
+    expect(rainDmg).toBeLessThan(fogDmg);
+  });
+});

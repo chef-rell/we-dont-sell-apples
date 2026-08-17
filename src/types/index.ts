@@ -448,6 +448,34 @@ export type AIMode = "full" | "light" | "off";
  *  load (spec §4 rule: "the contract is sacred," change flagged there). */
 export type GameView = "town" | "shop" | "gameover";
 
+// ---------- Weather (spec V2.9, issue #94) ----------
+
+/** Rolled ONCE at each day rollover and stored — every downstream reader
+ *  (Combat.ts's threat calc, party formation, the wholesale merchant) reads
+ *  this field only, never rerolls. "storm" is a shop day: no party forms
+ *  (GameEngine.formAfternoonParty). Faucet guard: two storms never land
+ *  back to back (see `rollWeather` in game/Weather.ts) — a would-be second
+ *  storm re-rolls to "clear" instead. */
+export type WeatherKind = "clear" | "rain" | "fog" | "storm";
+
+// ---------- NPC competitor stores (spec V2.10, issue #94) ----------
+
+/** A rival shop (spec V2.10 — "deliberately shallow"): no full inventory
+ *  simulation. `priceLevel` is a fixed markup multiplier (1.5-1.9× a basic
+ *  item's baseValue, see `game/Competition.ts`'s `defaultCompetitors()`);
+ *  rotating stock is computed on demand from `day` + `id` (deterministic,
+ *  not persisted) rather than stored here. `till` accumulates gold from
+ *  adventurer purchases through the day and pays out to the poorest
+ *  adventurers at the next rollover ("the town spends its money in town",
+ *  spec V2.9's gold recycling) — ledger-invisible, since it was never the
+ *  player's money. */
+export interface CompetitorStore {
+  id: string;
+  name: string;
+  priceLevel: number;
+  till: number;
+}
+
 // ---------- Town buildings (spec V2.8; issue #56) ----------
 
 /** Known kinds today; the union stays open (via the `string &` widening
@@ -524,6 +552,16 @@ export interface GameState {
    *  or after day rollover clears it. Additive; `loadGame()` defaults old
    *  saves to null. */
   currentScript: AdventureScript | null;
+  /** A night owl's solo run script (spec V2.9/Phase-2 deferral, issue #94):
+   *  written in `AdventurerBehavior.resolveNightRun()` the moment a night
+   *  run generates (dawn, the instant the day rolls over) so the strip
+   *  (Phase 5b) can play it back during the FOLLOWING night phase; cleared
+   *  right before that write, at the NEXT day's rollover (see
+   *  `GameEngine.tick`'s `dayRolled` guard — timed deliberately ahead of
+   *  onNewDay() so a script written this tick isn't erased in the same
+   *  tick it's created). Distinct from `currentScript`, which is reserved
+   *  for the day's one afternoon party. Additive; `??= null` on load. */
+  nightScript: AdventureScript | null;
   /** The player's second character (spec V2.7, issue #83); `null` until
    *  `engine.createCharacters()` runs. Additive; `loadGame()` defaults old
    *  saves to null — every system already treats null as "no helper yet". */
@@ -536,6 +574,16 @@ export interface GameState {
    *  saves to `[]` — every system already treats an empty roster as "no
    *  hires yet". */
   staff: Staff[];
+  /** NPC competitor stores (spec V2.10, issue #94); seeded via
+   *  `defaultCompetitors()` in `game/Competition.ts`. Additive; `loadGame()`
+   *  defaults old saves to a fresh `defaultCompetitors()` array. */
+  competitors: CompetitorStore[];
+  /** Today's committed weather (spec V2.9, issue #94), rolled once at
+   *  rollover. Additive; `loadGame()` defaults old saves to `"clear"`. */
+  weather: WeatherKind;
+  /** Consecutive days (including today) at the current `weather` kind.
+   *  Additive; `loadGame()` defaults old saves to `1`. */
+  weatherStreak: number;
   tokenBudget: TokenBudget;
   aiMode: AIMode;
   stats: {

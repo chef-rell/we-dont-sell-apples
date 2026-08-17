@@ -13,6 +13,8 @@ import { browseSpeedFactor } from "./Helper";
 import { fallbackMorningPlan, type DayPlan } from "./AdventurerFallback";
 import { getBuilding } from "../utils/TownBuildings";
 import { planRepairErrand, resolveRepairErrand } from "../game/Property";
+import { chooseCompetitorStore, resolveCompetitorPurchase } from "../game/Competition";
+import { COMPETITOR_NOTHING_AFFORDABLE_TRIGGER } from "../utils/constants";
 
 const WALK_SPEED = 60; // world px/sec at 1×
 
@@ -72,6 +74,32 @@ export interface BehaviorContext {
    *  repaired. Reuses the "heading_to_shop"/"browsing" states with the
    *  target swapped to the forge's door; cleared on arrival either way. */
   repairSlot: "weapon" | "armor" | null;
+  // ---- spec V2.10, issue #94 (competitor stores — engine-only, not persisted) ----
+  /** True the moment an "angry" reaction fires during THIS shop trip;
+   *  consulted (and cleared) by leaveShop(). Reset early if a later item in
+   *  the same trip is actually bought (a careful shopper's second look). */
+  angryThisTrip: boolean;
+  /** Consecutive shop trips (across days) that ended with nothing on the
+   *  shelves this adventurer could afford — 2+ redirects to a competitor
+   *  (spec V2.10). Persists across days; resets to 0 the moment a trip DOES
+   *  find something affordable. */
+  nothingAffordableStreak: number;
+  /** Competitor store id this "wandering" walk is headed to, if any — set
+   *  by leaveShop()'s redirect, consumed (and cleared) on arrival by the
+   *  same generic "arrived at target" branch every other wander-target
+   *  uses. Null the rest of the time. */
+  competitorVisit: string | null;
+  /** One-shot per evening: true once this adventurer's evening idle-drift
+   *  has already routed them past the tavern (spec V2.9/Phase-2 deferral's
+   *  "night owls gather at the tavern before slipping out"); reset at the
+   *  next beginDay(). Only ever set for `a.nightOwl` adventurers. */
+  eveningTavernVisited: boolean;
+  /** True while the current bc.target is the arrival-day graveyard detour
+   *  beginDay() set (spec V2.9, issue #94) — tells the generic "arrived at
+   *  target" branch NOT to overwrite bc.timer with the short idle-linger
+   *  value, which would cut the morning wake-up stagger short. Cleared the
+   *  moment that arrival is handled. */
+  graveyardWaypoint: boolean;
 }
 
 export function freshContext(): BehaviorContext {
@@ -88,6 +116,11 @@ export function freshContext(): BehaviorContext {
     lootToSell: [],
     pendingOfferId: null,
     repairSlot: null,
+    angryThisTrip: false,
+    nothingAffordableStreak: 0,
+    competitorVisit: null,
+    eveningTavernVisited: false,
+    graveyardWaypoint: false,
   };
 }
 
@@ -140,14 +173,14 @@ export function stepAdventurer(
       }
       // Wake at dawn: plan the day (deterministic immediately; AI may override).
       if ((s.phase === "dawn" || s.phase === "morning") && bc.planDay !== s.day) {
-        beginDay(a, bc, s.day);
+        beginDay(a, bc, s, out);
       }
       break;
     }
 
     case "wandering": {
       if ((s.phase === "dawn" || s.phase === "morning") && bc.planDay !== s.day) {
-        beginDay(a, bc, s.day); // covers day 1, when nobody starts in "resting"
+        beginDay(a, bc, s, out); // covers day 1, when nobody starts in "resting"
       }
       // Route by plan and phase.
       if (s.phase === "night") {
@@ -182,7 +215,17 @@ export function stepAdventurer(
         bc.target = doorOf(s, "shop");
         break;
       }
-      if (bc.plan === "adventure" && !bc.adventured && bc.timer <= 0 && s.phase === "afternoon") {
+      // Storm days are shop days (spec V2.9, issue #94): no party forms
+      // (GameEngine.formAfternoonParty already returns early), and nobody
+      // even sets out for the gate — they shop/tavern instead, same as any
+      // other day their plan wasn't "adventure".
+      if (
+        bc.plan === "adventure" &&
+        !bc.adventured &&
+        bc.timer <= 0 &&
+        s.phase === "afternoon" &&
+        s.weather !== "storm"
+      ) {
         a.state = "heading_to_gate";
         const gate = doorOf(s, "gate");
         bc.target = { x: gate.x, y: gate.y + 30 };
@@ -192,28 +235,71 @@ export function stepAdventurer(
       // is ambience, not a §6 verdict; the old deterministic pick meant one
       // walk per day and then a statue).
       if (!bc.target && bc.timer <= 0) {
-        const tavernDoor = doorOf(s, "tavern");
-        const shop = anchorOf(s, "shop");
-        const houses = houseAnchors(s);
-        const spots = [
-          anchorOf(s, "square"),
-          { x: tavernDoor.x, y: tavernDoor.y + 20 },
-          { x: shop.x + 60, y: shop.y + 90 },
-          { x: houses[1].x + 20, y: houses[1].y - 40 },
-        ];
-        const p = spots[Math.floor(Math.random() * spots.length)];
-        bc.target = {
-          x: p.x + Math.floor(Math.random() * 100) - 50,
-          y: p.y + Math.floor(Math.random() * 60) - 30,
-        };
+        // Night-raid tavern beat (spec V2.9/Phase-2 deferral, issue #94):
+        // night owls gather at the tavern during evening, once, before the
+        // night-curfew walk-home (and possibly a slip-out) takes over —
+        // reuses the existing idle-drift target/arrival machinery, no new
+        // state. Gated on `nightOwl` alone (not the slip-out's own morale/HP
+        // gate below) — this is atmosphere for every night owl, not a
+        // promise they'll actually go out tonight.
+        if (s.phase === "evening" && a.nightOwl && !bc.eveningTavernVisited) {
+          bc.eveningTavernVisited = true;
+          const tavernDoor = doorOf(s, "tavern");
+          bc.target = { x: tavernDoor.x, y: tavernDoor.y + 20 };
+          out.messages.push(adventurerMsg(s, a, "One more round, then the cave."));
+        } else {
+          const tavernDoor = doorOf(s, "tavern");
+          const shop = anchorOf(s, "shop");
+          const houses = houseAnchors(s);
+          const spots = [
+            anchorOf(s, "square"),
+            { x: tavernDoor.x, y: tavernDoor.y + 20 },
+            { x: shop.x + 60, y: shop.y + 90 },
+            { x: houses[1].x + 20, y: houses[1].y - 40 },
+          ];
+          const p = spots[Math.floor(Math.random() * spots.length)];
+          bc.target = {
+            x: p.x + Math.floor(Math.random() * 100) - 50,
+            y: p.y + Math.floor(Math.random() * 60) - 30,
+          };
+        }
       }
       // Only an adventurer who actually had somewhere to be has "arrived".
       // walkToward() reports true when there is no target at all, so resetting
       // the linger timer unconditionally re-armed it every tick and the timer
       // never reached zero — which silently blocked the departure gates above.
       if (bc.target && walkToward(a, bc, dt)) {
+        // Competitor purchase (spec V2.10, issue #94): arrived at the store
+        // leaveShop() redirected this walk to — resolve the transaction now,
+        // exactly once, then fall through to the same idle reset as every
+        // other wander-target arrival.
+        if (bc.competitorVisit) {
+          const storeId = bc.competitorVisit;
+          bc.competitorVisit = null;
+          const result = resolveCompetitorPurchase(a, s, storeId);
+          if (result) {
+            const store = s.competitors.find((c) => c.id === storeId);
+            out.messages.push(
+              adventurerMsg(
+                s,
+                a,
+                `Fine, ${store?.name ?? "the other place"} it is. ${result.price}g and I'm out.`,
+              ),
+            );
+          }
+        }
         bc.target = null;
-        bc.timer = 4 + Math.random() * 8; // linger, varied
+        if (bc.graveyardWaypoint) {
+          // Newcomer graveyard detour (spec V2.9, issue #94): arriving here
+          // must NOT shorten bc.timer — it's still counting down the
+          // wake-up stagger beginDay() set (20-60s, #50's fix), and this
+          // walk started well before that timer's floor. Overwriting it
+          // with the short idle-linger value below would let this one
+          // adventurer's shop/adventure departure jump the stagger queue.
+          bc.graveyardWaypoint = false;
+        } else {
+          bc.timer = 4 + Math.random() * 8; // linger, varied
+        }
       }
       break;
     }
@@ -234,7 +320,7 @@ export function stepAdventurer(
             out.messages.push(systemMsg(s, `${a.name} had their gear repaired at the forge for ${cost}g.`));
           }
           bc.repairSlot = null;
-          leaveShop(a, bc, s);
+          leaveShop(a, bc, s, out, { checkCompetitor: false }); // a repair trip never touched the shelves
           break;
         }
         a.state = "browsing";
@@ -253,7 +339,7 @@ export function stepAdventurer(
         a.state = "buying";
         bc.timer = 2.5 * waitSpeed;
       } else {
-        if (item) recordReaction(a, item, out, s);
+        if (item) recordReaction(a, item, out, s, bc);
         // Careful shoppers examine a second item; others leave.
         const next = pickShelfItem(a, s, bc.browsingItem);
         if (a.personality.spendingStyle === "careful" && next) {
@@ -261,7 +347,7 @@ export function stepAdventurer(
           a.browsingItemId = next;
           bc.timer = browseTime(a) * waitSpeed;
         } else {
-          leaveShop(a, bc, s);
+          leaveShop(a, bc, s, out);
         }
       }
       break;
@@ -271,10 +357,12 @@ export function stepAdventurer(
       if (bc.timer > 0) break;
       const idx = s.shelves.findIndex((it) => it?.id === bc.browsingItem);
       const item = idx >= 0 ? s.shelves[idx] : null;
+      let bought = false;
       if (item && item.salePrice !== null && item.salePrice <= a.gold) {
         completePurchase(a, item, idx, s, out);
+        bought = true;
       }
-      leaveShop(a, bc, s);
+      leaveShop(a, bc, s, out, { boughtThisTrip: bought });
       break;
     }
 
@@ -304,7 +392,7 @@ export function stepAdventurer(
         // load-bearing). Night runs generate their own small solo script,
         // resolved at dawn exactly as v1 resolved solo adventures.
         const outcome = bc.onNightRun
-          ? resolveNightRun(a, s.day)
+          ? resolveNightRun(a, s)
           : (findScriptOutcome(s, a.id) ?? resolveAdventure(a, s.day, {}));
         bc.onNightRun = false;
         out.outcome = outcome;
@@ -425,12 +513,20 @@ export function stepAdventurer(
 
 // ---------- day start ----------
 
-function beginDay(a: Adventurer, bc: BehaviorContext, day: number): void {
-  bc.planDay = day;
+function beginDay(a: Adventurer, bc: BehaviorContext, s: GameState, out: StepResult): void {
+  bc.planDay = s.day;
+  // Arrival day (spec V2.9, issue #94): daysInTown is still 0 the FIRST time
+  // beginDay ever runs for this adventurer — true for the starting cast on
+  // day 1 and for every later replacement wave alike (memory.daysInTown is
+  // part of the saved contract, so this reads correctly even across a
+  // reload that resets BehaviorContext to fresh). Checked before the
+  // increment just below.
+  const isArrivalDay = a.memory.daysInTown === 0;
   a.hp = Math.min(a.maxHp, a.hp + 10); // overnight recovery
   bc.plan = fallbackMorningPlan(a);
   bc.shopped = false;
   bc.adventured = false;
+  bc.eveningTavernVisited = false;
   a.daysSinceLastAdventure += 1;
   a.memory.daysInTown += 1;
   a.state = "wandering";
@@ -444,6 +540,15 @@ function beginDay(a: Adventurer, bc: BehaviorContext, day: number): void {
   // 60s ceiling still puts every departure early in the morning (which runs to
   // ~210s), so nobody misses their shop trip.
   bc.timer = 20 + Math.random() * 40;
+  // Newcomer graveyard waypoint (spec V2.9, issue #94): one-time detour
+  // inserted into the arrival-day walk, reusing "wandering"'s existing
+  // target/arrival machinery — no new state. Overrides nothing else this
+  // trip since bc.target is otherwise unset at this point in beginDay().
+  if (isArrivalDay) {
+    bc.target = doorOf(s, "graveyard");
+    bc.graveyardWaypoint = true;
+    out.messages.push(adventurerMsg(s, a, "New in town. Figured I'd pay my respects first — read a few of the names."));
+  }
 }
 
 /** AI morning decision arrived (async) — adopt it if the day hasn't progressed past it. */
@@ -480,11 +585,61 @@ function pickShelfItem(a: Adventurer, s: GameState, excludeId?: string | null): 
   return scored[0].it.id;
 }
 
-function leaveShop(a: Adventurer, bc: BehaviorContext, s: GameState): void {
+/** True when at least one shelved, priced item is within this adventurer's
+ *  current gold — the affordability half of the competitor-redirect trigger
+ *  (spec V2.10, issue #94). A bare/unpriced shelf also reads as "nothing
+ *  affordable" (nothing there to buy at all). */
+function hasAffordablePricedItem(a: Adventurer, s: GameState): boolean {
+  return s.shelves.some((it) => it !== null && it.salePrice !== null && it.salePrice <= a.gold);
+}
+
+function leaveShop(
+  a: Adventurer,
+  bc: BehaviorContext,
+  s: GameState,
+  out: StepResult,
+  opts: { checkCompetitor?: boolean; boughtThisTrip?: boolean } = {},
+): void {
   a.state = "wandering";
   bc.shopped = true;
   bc.browsingItem = null;
   a.browsingItemId = null;
+
+  // Competitor redirect (spec V2.10, issue #94): an angry walkout THIS
+  // trip, or a second-or-later consecutive day finding nothing on the
+  // shelves they could afford, sends them to a rival store instead of
+  // drifting the square. `opts.checkCompetitor === false` skips this
+  // entirely for a repair errand, which never touched the shelves at all.
+  const checkCompetitor = opts.checkCompetitor !== false;
+  if (checkCompetitor) {
+    if (opts.boughtThisTrip) {
+      // They just bought something — trivially "found something
+      // affordable" this trip. Checked BEFORE rescanning the shelf: the
+      // item they bought is already gone from it by this point, so a
+      // fresh scan could wrongly read as "nothing affordable" even though
+      // they just walked out with a purchase.
+      bc.nothingAffordableStreak = 0;
+      bc.angryThisTrip = false; // an earlier angry look this trip doesn't matter now
+    } else {
+      const affordable = hasAffordablePricedItem(a, s);
+      bc.nothingAffordableStreak = affordable ? 0 : bc.nothingAffordableStreak + 1;
+      const triggered = bc.angryThisTrip || bc.nothingAffordableStreak >= COMPETITOR_NOTHING_AFFORDABLE_TRIGGER;
+      bc.angryThisTrip = false;
+      if (triggered) {
+        const storeId = chooseCompetitorStore(a, s);
+        if (storeId) {
+          const store = s.competitors.find((c) => c.id === storeId);
+          bc.competitorVisit = storeId;
+          bc.target = doorOf(s, storeId);
+          out.messages.push(
+            adventurerMsg(s, a, `Not paying THAT here. ${store?.name ?? "Somewhere else"} will do.`),
+          );
+          return;
+        }
+      }
+    }
+  }
+
   // Scatter across the square instead of everyone converging on one pixel and
   // standing in each other (#50).
   const square = anchorOf(s, "square");
@@ -539,12 +694,13 @@ function completePurchase(
   out.messages.push(systemMsg(s, `${a.name} bought ${item.name} for ${price}g!`));
 }
 
-function recordReaction(a: Adventurer, item: Item, out: StepResult, s: GameState): void {
+function recordReaction(a: Adventurer, item: Item, out: StepResult, s: GameState, bc: BehaviorContext): void {
   const r = computeReaction(a, item);
   if (r === "angry") {
     recordWalkout(s);
     a.relationships.shopkeeper = Math.max(-100, a.relationships.shopkeeper - 2);
     a.morale = Math.max(0, a.morale - 2); // being priced out is demoralizing (§14)
+    bc.angryThisTrip = true; // spec V2.10, issue #94: leaveShop() reads this for the competitor redirect
     out.messages.push(systemMsg(s, `${a.name} scoffed at the price of ${item.name} and walked out.`));
   }
 }
@@ -589,10 +745,19 @@ function findScriptOutcome(s: GameState, adventurerId: string): AdventureOutcome
  *  dawn as today" (spec V2.6). Not stored on state.currentScript, which is
  *  reserved for the day's one afternoon party; the seed is drawn fresh here
  *  (liveliness) and stored on the throwaway script for replay parity with
- *  the party path, even though nothing persists it today. */
-function resolveNightRun(a: Adventurer, day: number): AdventureOutcome {
+ *  the party path.
+ *
+ *  spec V2.9/Phase-2 deferral, issue #94: this IS "where night runs
+ *  generate today" — the script is now also written to `s.nightScript` so
+ *  the strip (Phase 5b) has something to play back. GameEngine.tick's
+ *  `dayRolled` guard clears the field BEFORE this function can run each
+ *  day (see that comment for the full ordering reasoning), so a script
+ *  written here survives the entire day that follows. Reads `s.weather`
+ *  into the same threat multiplier the afternoon party gets. */
+function resolveNightRun(a: Adventurer, s: GameState): AdventureOutcome {
   const seed = Math.floor(Math.random() * 2 ** 31);
-  const script = generateAdventureScript([a], day, { night: true, seed }, makeRng(seed));
+  const script = generateAdventureScript([a], s.day, { night: true, seed, weather: s.weather }, makeRng(seed));
+  s.nightScript = script;
   return script.memberOutcomes[0];
 }
 
@@ -609,6 +774,25 @@ function systemMsg(s: GameState, content: string): ChatMessage {
     senderId: "system",
     senderName: "Town",
     type: "system",
+    content,
+    timestamp: s.timeOfDay,
+    day: s.day,
+  };
+}
+
+/** An adventurer-voiced flavor line (spoken in first person, matching
+ *  TownChat.ts's fallbackChatter style) — deterministic text; a fully
+ *  functional fallback, no async AI call from this module (§7: AI is never
+ *  load-bearing, and every other AI hook in this codebase is orchestrated
+ *  from GameEngine, not from here). Used for the competitor-redirect,
+ *  graveyard-waypoint, and evening-tavern flavor beats (spec V2.9/V2.10,
+ *  issue #94). */
+function adventurerMsg(s: GameState, a: Adventurer, content: string): ChatMessage {
+  return {
+    id: `chat-${s.day}-${a.id}-${msgCounter++}`,
+    senderId: a.id,
+    senderName: a.name,
+    type: "ambient",
     content,
     timestamp: s.timeOfDay,
     day: s.day,

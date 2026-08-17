@@ -273,6 +273,95 @@ bus, renderer/logic separation, `makeDecision` as the swappable AI seam).
 *(append dated entries here when a build decision deviates from this spec, per
 v1 §20 rule 4.)*
 
+**2026-08-16 — Phase 5a: competitors, weather, night-raid beat, graveyard
+(engine)** (issue #94, new `game/Weather.ts` + `game/Competition.ts`;
+`game/Combat.ts`, `game/GameEngine.ts`, `entities/AdventurerBehavior.ts`,
+`utils/TownBuildings.ts`, `game/GameStatePersistence.ts` wiring). Engine only
+— the strip's night-raid playback and every building's iso art are Phase 5b
+(Dev B). Judgment calls the issue left implicit:
+
+1. **nightScript's clear-vs-write ordering.** The issue's own hint ("check
+   the existing dawn-resolution timing") flagged a real same-tick hazard: a
+   night run resolves and writes `s.nightScript` at the exact tick the day
+   rolls over (dawn), and `onNewDay()` — which runs AFTER that write, same
+   tick, per `GameEngine.tick`'s existing order — would otherwise erase it
+   immediately, before a single frame ever showed it. Fixed by moving the
+   clear to fire BEFORE the adventurer step loop (right where `dayRolled`
+   is computed), not inside `onNewDay()` at all: this clears YESTERDAY's
+   script ahead of any fresh write, so a script written this tick survives
+   the entire day that follows — including that day's own night phase, for
+   the strip to read — and only clears at the next day's equivalent
+   boundary. One practical effect: if the same night owl (or any night owl)
+   goes out again the very next night, the new script simply overwrites the
+   old one on arrival — last-to-resolve-that-dawn wins. Purely
+   presentational (no `AdventureOutcome`/gold/loot fact reads this field),
+   so this is a flavor choice, not a §6 concern.
+2. **Competitor `CompetitorStore` shape grew a `till: number` field** beyond
+   the issue's literal `{ id, name, priceLevel }` — gold recycling (V2.9)
+   needs somewhere to accumulate a store's daily sales between the
+   purchase and the next rollover's payout, and the issue's own "rotating
+   limited stock... deterministic from day + store id" already implies
+   stock itself is NOT persisted (computed on demand in
+   `Competition.ts`'s `competitorStock()` — no extra state needed there).
+3. **Competitor purchases are gold-only, no Item materializes.** "Buys a
+   basic there" (V2.10) only describes the gold movement; matching the
+   section's own "deliberately shallow... no full inventory simulation"
+   framing, `resolveCompetitorPurchase()` moves gold from the adventurer's
+   wallet to the store's till and returns the item key/price for the
+   flavor line, but never creates a real `Item` — there's no gameplay
+   surface (combat, resale) that would read it anyway.
+4. **Gold recycling's split: poorest HALF of the alive town, not a fixed
+   count or "everyone."** The issue says "the poorest adventurers'
+   wallets" without a number; implemented as `Math.ceil(n/2)` recipients
+   (min 1), integer share + remainder (same pattern as `Combat.ts`'s
+   goldDrop split) so it's exact-conserving regardless of town size.
+5. **Store choice's two triggers share one `leaveShop()` gate**, not two
+   separate code paths: an angry reaction sets a per-trip
+   `bc.angryThisTrip` flag; a trip that finds nothing on the shelves
+   affordable increments a persisted `bc.nothingAffordableStreak` (both new
+   `BehaviorContext` fields — engine-only, never persisted, matching how
+   `repairSlot`/`onNightRun` already work). Either condition redirects the
+   SAME walk-home into a competitor visit via `chooseCompetitorStore()`; a
+   successful purchase at the player's own shop clears both, so a careful
+   shopper's earlier angry look at item #1 doesn't still send them off
+   after buying item #2.
+6. **"AI voices the choice" is a deterministic fallback line, not a live
+   Haiku call.** Every other AI hook in this codebase is orchestrated from
+   `GameEngine.ts`, never from `AdventurerBehavior.ts` directly (spec §7:
+   "AI is never load-bearing," and the seam is `makeDecision()`); adding a
+   new async call site inside the behavior machine itself would be a
+   bigger architectural change than this issue's engine scope. The
+   competitor-redirect, graveyard-waypoint, and evening-tavern beats all
+   get a real first-person flavor line (matching `TownChat.ts`'s
+   `fallbackChatter` style) via a new `adventurerMsg()` helper — fully
+   functional today; wiring an actual `makeDecision()` narration pass on
+   top is a small, isolated follow-up for whoever picks up Phase 5b.
+7. **Newcomer graveyard waypoint applies to the STARTING cast too, not
+   only later replacement waves.** Gated on `a.memory.daysInTown === 0`
+   (true the first time `beginDay()` ever runs for an adventurer, whether
+   day 1 or day 40) rather than tracking "is this a replacement" — simpler,
+   and flavor-harmless (day 1's graveyard is just empty).
+8. **Storm blocks the gate departure at its source, not just the party
+   formation.** `formAfternoonParty()` already returns `currentScript =
+   null` on a storm day, but `AdventurerBehavior.ts`'s "wandering" case
+   also gates the `heading_to_gate` transition itself on `s.weather !==
+   "storm"` — without it, an adventurer would still walk to the gate,
+   stand there all afternoon (no script to read), and never resolve
+   anything. Belt-and-suspenders, not redundant.
+9. **Two-competitor-store and graveyard placement** — see
+   `utils/TownBuildings.ts`'s inline comments for the iso-occlusion check
+   (both stores sit in open sky with nothing north of them at an
+   overlapping x-range; the graveyard is flat, so occlusion doesn't apply
+   to it either way) and the "east of the houses, clear of paths"
+   verification, mirrored in `TownBuildings.test.ts`.
+
+Balance guardrail (`scripts/balance-report.ts 7`) held: net worth stayed
+within low single-digit percent of pre-#94 main at every markup band (well
+inside ±25%); the new storm-heavy scenario (same script, forced
+storm/clear-alternating weather — the guard's own maximum legal density)
+showed the faucet guard holding across every trial run — gold never sat
+flat two days running. Full tables in PR #TBD's body.
+
 **2026-08-16 — Phase 0 complete** (issues #55–#60 via PRs #63, #64, #66, #67;
 plus #65, a test-determinism fix). Build notes for later phases:
 
