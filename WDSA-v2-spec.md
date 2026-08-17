@@ -380,6 +380,19 @@ plus #65, a test-determinism fix). Build notes for later phases:
    movement), and the equipped weapon renders as one uniform blade regardless
    of weapon type — revisit alongside rarity visuals in Phase 4 (#66).
 
+**2026-08-16 — Phase 5 complete, tagged `v2.5-town-alive` — v2.0 RELEASE
+CANDIDATE** (issues #94 engine, #95 presentation — PRs #100, #102; plus
+#101, which made the whole test suite free of unseeded randomness). All
+five phases of the V2.12 plan shipped in one day, main always-shippable
+throughout. Build notes: night-script playback splits night 55/45
+outbound/return; lightning is a pure function of the clock (no shared
+state between the two rAF loops); audio reuses the single-bed
+SoundManager (textured rain + multi-bed layering deferred); competitor
+purchases are gold-only per V2.10. Remaining post-RC work: playtest
+tuning (constants + balance-report), deterministic uncommon forging at
+high smith levels, fire-staff method, dedicated garden/lab panels,
+backend proxy (v1 spec §19) for multiplayer.
+
 **2026-08-16 — Phase 4 complete, tagged `v2.4-economy`** (issues #90 rarity/
 enchant/repair engine, #91 craft track + property + staff, #92 visuals —
 PRs #93, #96, #97, plus the plot-layout fix). Balance guardrails held at
