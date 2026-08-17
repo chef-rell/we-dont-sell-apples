@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { dayProgress, isNightSky } from "../game/DayNightCycle";
 import type { GameEngine } from "../game/GameEngine";
+import { WEATHER_ICON } from "../rendering/WeatherFX";
 import type { DayPhase } from "../types";
 import { DAY_SKY, PALETTE, PHASE_BOUNDS } from "../utils/constants";
 
@@ -84,6 +85,14 @@ export function TimeColumn({ engine }: { engine: GameEngine }) {
       })}
 
       <div style={{ ...markerStyle, top: `${markerTop}%` }}>{night ? "🌙" : "☀️"}</div>
+
+      {/* Today's weather (spec V2.9, issue #95) — a fixed corner badge
+          rather than another band on the phase gradient, since it's a
+          once-a-day fact (rolled at rollover, game/Weather.ts) not a
+          moment-to-moment one like the phase labels below it. */}
+      <div style={weatherBadgeStyle} title={`Weather: ${s.weather}`}>
+        {WEATHER_ICON[s.weather]}
+      </div>
     </div>
   );
 }
@@ -145,6 +154,17 @@ const markerStyle: CSSProperties = {
   transform: "translate(-50%, -50%)",
   fontSize: 18,
   textShadow: "0 0 8px rgba(255,255,255,0.5), 0 1px 2px rgba(0,0,0,0.8)",
+  zIndex: 2,
+  pointerEvents: "none",
+};
+
+const weatherBadgeStyle: CSSProperties = {
+  position: "absolute",
+  top: 4,
+  right: 4,
+  fontSize: 14,
+  lineHeight: 1,
+  textShadow: "0 1px 2px rgba(0,0,0,0.8)",
   zIndex: 2,
   pointerEvents: "none",
 };
