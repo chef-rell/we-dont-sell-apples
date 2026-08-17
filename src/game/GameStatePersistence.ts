@@ -7,6 +7,7 @@ import type { GameState } from "../types";
 import { freshLedger } from "./Ledger";
 import { defaultBuildings } from "../utils/TownBuildings";
 import { CRAFT_PLOTS } from "./Property";
+import { defaultCompetitors } from "./Competition";
 
 // v2 fresh-start policy (spec V2.1 decision 4, V2.11): v2 reads and writes
 // ONLY this key. The old `wdsa_save_v1` key is never read, migrated, or
@@ -49,10 +50,15 @@ export function loadGame(): GameState | null {
     state.pricingHistory ??= [];
     state.currentScript ??= null; // AdventureScript (spec V2.5, issue #76); old saves never had a mid-script save anyway
     if (state.currentScript) state.currentScript.helperAlong ??= false; // spec V2.7, issue #83
+    state.nightScript ??= null; // spec V2.9/issue #94 — night-raid script, distinct from currentScript
+    if (state.nightScript) state.nightScript.helperAlong ??= false; // same forward-compat as currentScript above
     state.helper ??= null; // spec V2.7, issue #83
     if (state.helper) state.helper.trackChosenDay ??= null; // spec V2.9, issue #91
     state.shopkeeperAppearance ??= null; // spec V2.7, issue #83
     state.staff ??= []; // spec V2.9, issue #91 (hired staff)
+    state.competitors ??= defaultCompetitors(); // spec V2.10, issue #94
+    state.weather ??= "clear"; // spec V2.9, issue #94
+    state.weatherStreak ??= 1; // spec V2.9, issue #94
     for (const a of state.adventurers) {
       a.browsingItemId ??= null;
       a.memory.lowMoraleDays ??= 0;

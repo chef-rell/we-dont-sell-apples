@@ -10,12 +10,14 @@ import type {
   AdventureScriptEvent,
   Enchantment,
   LootRoll,
+  WeatherKind,
   WildernessArea,
 } from "../types";
 import { MONSTERS, encounterFor, type MonsterDef } from "../entities/Monster";
 import { DURABILITY_LOSS_MIN, DURABILITY_LOSS_MAX } from "../utils/constants";
 import { helperCombatPower } from "../entities/Helper";
 import { rollLootEnchantments, rollLootRarity } from "../entities/Item";
+import { weatherThreatMultiplier } from "./Weather";
 
 /** Adventurer combat power from level + gear (spec §7 death factors). */
 export function combatPower(a: Adventurer): number {
@@ -303,15 +305,23 @@ function hasEnchant(a: Adventurer, e: Enchantment): boolean {
  * every helper-related code path a no-op and every number identical to
  * pre-#83 behavior — confirmed via `scripts/balance-report.ts`, which never
  * passes this field.
+ *
+ * `opts.weather` (spec V2.9, issue #94): read into the per-encounter threat
+ * multiplier only (rain ×1.15, fog ×1.25 — see Weather.ts). Defaults to
+ * "clear" (×1, a no-op) so every pre-#94 caller — including
+ * `scripts/balance-report.ts`, which never passes this field — is
+ * byte-identical to before. Scoped to this function alone, matching #90's
+ * precedent: the v1 `resolveAdventure()` fallback path never reads weather.
  */
 export function generateAdventureScript(
   party: Adventurer[],
   day: number,
-  opts: { night?: boolean; seed?: number; helper?: { level: number } } = {},
+  opts: { night?: boolean; seed?: number; helper?: { level: number }; weather?: WeatherKind } = {},
   rng: () => number = Math.random,
 ): AdventureScript {
   const night = opts.night ?? false;
   const seed = opts.seed ?? 0;
+  const weatherMult = weatherThreatMultiplier(opts.weather ?? "clear");
   const helperAlong = opts.helper != null;
   const helperPower = helperAlong ? helperCombatPower(opts.helper!) : 0;
   const area = choosePartyArea(party, day);
@@ -371,7 +381,7 @@ export function generateAdventureScript(
     // 0.5 + 0.5×size coefficient undershot threat growth and pushed ending
     // gold ~25-50% over pre-party main at the 1.2× markup band).
     const threat =
-      monsterThreat(monster) * (1 + 0.65 * (aliveMembers.length - 1)) * (night ? 1.5 : 1);
+      monsterThreat(monster) * (1 + 0.65 * (aliveMembers.length - 1)) * (night ? 1.5 : 1) * weatherMult;
     const winChance = clamp((power / (power + threat)) * 1.3, 0.15, 0.95);
     const won = rng() < winChance;
     finalWon = won;

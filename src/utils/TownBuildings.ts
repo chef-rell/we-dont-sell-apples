@@ -68,6 +68,44 @@ export function defaultBuildings(): TownBuilding[] {
       footprint: { x: 440, y: 280, w: 160, h: 120 }, // old TOWN.square + plaza size
       clickable: false,
     },
+    // ---- v2 Phase 5a additions (spec V2.9/V2.10, issue #94) ----
+    // Iso-occlusion check (spec V2.4's "never place a tall building directly
+    // south of something that must stay visible"): both competitor stores
+    // sit in open sky with NOTHING north of them at an overlapping x-range
+    // (competitor-north's x300-364 column is empty above y40 all the way to
+    // the world edge; competitor-east's x720-784 column is likewise empty
+    // above y40, clear of the tavern's x640-704 to its west) — so neither
+    // can rise up and hide something behind it, and nothing existing sits
+    // south of either at an overlapping x-range for THEM to occlude either.
+    // Both are also well clear of CRAFT_PLOTS (x12-152, y128-280 — see
+    // game/Property.ts) and every fixed footprint above (verified in
+    // TownBuildings.test.ts).
+    {
+      id: "competitor-north",
+      kind: "competitor_store",
+      footprint: { x: 300, y: 40, w: 64, h: 48 },
+      door: { x: 332, y: 88 },
+      clickable: false, // spec V2.10: shallow for now, no panel yet
+    },
+    {
+      id: "competitor-east",
+      kind: "competitor_store",
+      footprint: { x: 720, y: 40, w: 64, h: 48 },
+      door: { x: 752, y: 88 },
+      clickable: false,
+    },
+    // Flat headstones, not a tall structure — no occlusion risk either way.
+    // Sits east of every house (rightmost is house-2 at x560-600) and south
+    // of the gate-to-square walk line (gate door 880,300 -> square origin
+    // 440,280, i.e. roughly y300-340) so it's clear of that path too, per
+    // the issue's own "east of the houses, clear of paths."
+    {
+      id: "graveyard",
+      kind: "graveyard",
+      footprint: { x: 680, y: 460, w: 80, h: 56 },
+      door: { x: 720, y: 488 },
+      clickable: false,
+    },
   ];
 }
 

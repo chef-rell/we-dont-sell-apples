@@ -2,7 +2,7 @@
 // loot re-queue, merchant cycle, save/load round-trip, and game over.
 // These formalize the ad-hoc sims used in PR verification.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GameEngine } from "./GameEngine";
 import { loadGame, saveGame, SAVE_KEY } from "./GameStatePersistence";
 import { makeItem } from "../entities/Item";
@@ -1198,5 +1198,188 @@ describe("craft property save/load round-trip (#91)", () => {
     expect(loaded!.ledger.payrollSpend).toBe(0);
     expect(loaded!.ledger.repairRevenue).toBe(0);
     expect(loaded!.helper!.trackChosenDay).toBeNull();
+  });
+});
+
+// ---------- spec V2.9/V2.10, issue #94: competitors, weather, night-raid, graveyard ----------
+
+describe("weather (issue #94)", () => {
+  it("storm days block party formation and the gate departure entirely", () => {
+    const e = freshEngine();
+    e.state.weather = "storm"; // set state directly — CLAUDE.md's determinism discipline
+    for (const a of e.state.adventurers) {
+      // Force "adventure" out of fallbackMorningPlan: bare gold clears the
+      // early "shop first" branch, high restlessness clears the bar.
+      a.gold = 0;
+      a.daysSinceLastAdventure = 99;
+      a.personality.riskTolerance = 90;
+      a.nightOwl = false; // isolate to the daytime storm gate — no slip-out confound
+    }
+    let sawDeparture = false;
+    // 5000 ticks stays inside day 1 (a full day-with-night-speedup rollover
+    // needs exactly 5200 at 1×/100ms steps) — the weather-stays-storm
+    // assertion below only holds before the NEXT rollover re-rolls it.
+    for (let i = 0; i < 5000; i++) {
+      e.tick(100);
+      if (e.state.currentScript) sawDeparture = true;
+      if (e.state.adventurers.some((a) => a.state === "heading_to_gate")) sawDeparture = true;
+    }
+    expect(sawDeparture).toBe(false);
+    expect(e.state.weather).toBe("storm"); // never re-rolled mid-day — only at rollover
+    expect(e.state.day).toBe(1); // confirms we're still checking within the storm day itself
+  });
+
+  it("the storm-day merchant gold injection buys a loot item off a random adventurer", () => {
+    const e = freshEngine();
+    e.state.weather = "storm";
+    const seller = e.state.adventurers[0];
+    seller.inventory.push(makeItem("crude_hide")); // baseValue 6g — see entities/Item.ts's ITEM_DEFS
+    const goldBefore = seller.gold;
+
+    let injected = false;
+    // Bounded to stay inside day 1 (a full rollover needs 5200 ticks) — the
+    // shelves are never priced in this test, so a SECOND day would also
+    // read as "nothing affordable" and could trigger an unrelated
+    // competitor-redirect gold spend, contaminating this assertion.
+    for (let i = 0; i < 5000; i++) {
+      e.tick(100);
+      if (e.state.messages.some((m) => m.content.includes("bought") && m.content.includes("anyway"))) {
+        injected = true;
+      }
+    }
+    expect(injected).toBe(true);
+    expect(seller.gold).toBe(goldBefore + 6); // exact — the only gold event this window can produce
+    expect(seller.inventory.some((it) => it.name === "Crude Hide")).toBe(false);
+  });
+
+  it("the faucet guard prevents two consecutive storm days even when the roll would otherwise repeat", () => {
+    const e = freshEngine();
+    e.state.weather = "storm";
+    // Math.random mocked (not unseeded) to always land in the storm band —
+    // proves the guard, not the odds, is what prevents a repeat.
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.95);
+    try {
+      runDays(e, 1); // crosses exactly one rollover
+    } finally {
+      randomSpy.mockRestore();
+    }
+    expect(e.state.weather).toBe("clear");
+  });
+});
+
+describe("night-raid script persistence (issue #94)", () => {
+  it("nightScript survives the full day it's generated on, then clears at the next rollover", () => {
+    const e = freshEngine();
+    const s = e.state;
+    for (const a of s.adventurers) a.nightOwl = false;
+    const owl = s.adventurers[0];
+    owl.nightOwl = true;
+    owl.morale = 80;
+    owl.hp = owl.maxHp;
+
+    // Force the (otherwise ~20%-per-night) slip-out roll to fire on first
+    // eligibility — Math.random is mocked, not left unseeded, per CLAUDE.md.
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.0001);
+    let scriptSeenDay: number | null = null;
+    let stayedSetAllDay = true;
+    let clearedNextDay = false;
+    try {
+      for (let i = 0; i < 3 * 6000; i++) {
+        e.tick(100);
+        if (s.nightScript && scriptSeenDay === null) {
+          scriptSeenDay = s.day;
+          owl.nightOwl = false; // exactly one night run, so nothing rewrites it — isolates the clear
+        }
+        if (scriptSeenDay !== null) {
+          if (s.day === scriptSeenDay && s.nightScript === null) stayedSetAllDay = false;
+          if (s.day === scriptSeenDay + 1) {
+            clearedNextDay = s.nightScript === null;
+            break;
+          }
+        }
+      }
+    } finally {
+      randomSpy.mockRestore();
+    }
+
+    expect(scriptSeenDay).not.toBeNull();
+    expect(stayedSetAllDay).toBe(true);
+    expect(clearedNextDay).toBe(true);
+  });
+});
+
+describe("newcomer graveyard waypoint (issue #94)", () => {
+  it("a replacement adventurer's first walk passes the graveyard door", () => {
+    const e = freshEngine();
+    const s = e.state;
+    for (let i = 0; i < 3; i++) s.adventurers[i].alive = false; // drop below MIN_ADVENTURER_COUNT
+    const originalIds = new Set(s.adventurers.map((a) => a.id));
+    const graveDoor = s.buildings.find((b) => b.id === "graveyard")!.door!;
+
+    let sawNewcomer = false;
+    let cameNearGraveyard = false;
+    for (let i = 0; i < 3 * 6000; i++) {
+      e.tick(100);
+      for (const a of s.adventurers) {
+        if (originalIds.has(a.id)) continue;
+        sawNewcomer = true;
+        if (Math.hypot(a.position.x - graveDoor.x, a.position.y - graveDoor.y) < 20) cameNearGraveyard = true;
+      }
+    }
+    expect(sawNewcomer).toBe(true);
+    expect(cameNearGraveyard).toBe(true);
+  });
+});
+
+describe("competitor stores (issue #94)", () => {
+  it("an adventurer who walks out angry at a wildly overpriced shelf heads to a competitor", () => {
+    const e = freshEngine();
+    for (const it of e.state.shelves) if (it) e.setPrice(it.id, it.baseValue * 5); // guaranteed "angry"
+    let sawCompetitorSale = false;
+    runDays(e, 2, (eng) => {
+      if (eng.state.competitors.some((c) => c.till > 0)) sawCompetitorSale = true;
+    });
+    expect(sawCompetitorSale).toBe(true);
+    // Buying at the player's own shop is unaffected — nobody could afford
+    // the 5x markup, so the player-side sale count stays at 0.
+    expect(e.state.stats.itemsSold).toBe(0);
+  });
+  // Gold-recycling conservation ("sum of all wallets + tills + player gold
+  // is invariant across the redistribution") is proven precisely, in
+  // isolation, by Competition.test.ts's `recycleCompetitorGold` tests —
+  // calling it directly against hand-built state. A full-engine version of
+  // that same check would be contaminated by the OTHER, legitimate gold
+  // faucets a real day cycle runs (wilderness gold, the storm merchant
+  // bonus) which are never meant to net to zero, so it isn't duplicated here.
+});
+
+describe("v2.9/V2.10 contract save/load round-trip (issue #94)", () => {
+  it("round-trips competitors, weather, weatherStreak, and nightScript", () => {
+    const e = freshEngine();
+    e.state.weather = "fog";
+    e.state.weatherStreak = 3;
+    e.state.competitors[0].till = 42;
+    saveGame(e.state);
+    const loaded = loadGame();
+    expect(loaded!.weather).toBe("fog");
+    expect(loaded!.weatherStreak).toBe(3);
+    expect(loaded!.competitors[0].till).toBe(42);
+  });
+
+  it("defaults competitors/weather/weatherStreak/nightScript on a pre-#94 save", () => {
+    const e = freshEngine();
+    saveGame(e.state);
+    const raw = JSON.parse(localStorage.getItem(SAVE_KEY)!);
+    delete raw.competitors;
+    delete raw.weather;
+    delete raw.weatherStreak;
+    delete raw.nightScript;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+
+    const loaded = loadGame();
+    expect(loaded!.competitors).toHaveLength(2);
+    expect(loaded!.weather).toBe("clear");
+    expect(loaded!.weatherStreak).toBe(1);
+    expect(loaded!.nightScript).toBeNull();
   });
 });

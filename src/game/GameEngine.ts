@@ -36,6 +36,8 @@ import {
   hireStaff as hireStaffImpl,
   runCraftProduction,
 } from "./Property";
+import { defaultCompetitors, recycleCompetitorGold } from "./Competition";
+import { nextWeatherStreak, rollWeather } from "./Weather";
 import {
   fallbackReply,
   freshChatterState,
@@ -128,6 +130,20 @@ export class GameEngine {
 
     const dt = (deltaMs / 1000) * s.speed;
     const dayRolled = t >= 1;
+    // Night-raid script rollover (spec V2.9/Phase-2 deferral, issue #94):
+    // clear YESTERDAY's stored night script here, BEFORE the adventurer
+    // loop below can generate a fresh one straight over it. A night run
+    // resolves the instant phase flips to "dawn" — exactly this tick, when
+    // dayRolled is true — and AdventurerBehavior.resolveNightRun() writes
+    // s.nightScript a few lines down, in the SAME tick as this clear AND
+    // the SAME tick as onNewDay() (called at the bottom of this method,
+    // also gated on dayRolled). Ordering matters: clearing here, ahead of
+    // both, means a script written a few lines below survives untouched
+    // for the entire day that follows — long enough for the strip (Phase
+    // 5b) to play it back during that day's own night phase — and it's
+    // NOT touched by onNewDay() (which intentionally never clears this
+    // field; if it did, it would erase what this same tick just wrote).
+    if (dayRolled) s.nightScript = null;
     for (const a of s.adventurers) {
       if (!a.alive) continue;
       const bc = this.contextFor(a.id);
@@ -153,6 +169,14 @@ export class GameEngine {
    */
   private formAfternoonParty(): void {
     const s = this.state;
+    // Storm = shop day (spec V2.9, issue #94): no party forms at all, no
+    // matter who planned to adventure — AdventurerBehavior.ts's "wandering"
+    // case also gates the gate-departure itself on `s.weather !== "storm"`,
+    // so nobody's even mid-walk to the gate when this runs.
+    if (s.weather === "storm") {
+      s.currentScript = null;
+      return;
+    }
     const party = s.adventurers.filter((a) => {
       if (!a.alive) return false;
       const bc = this.contextFor(a.id);
@@ -171,7 +195,14 @@ export class GameEngine {
     // scripts byte-for-byte — see Combat.ts's generateAdventureScript doc.
     const helperOpts =
       s.helper && s.helper.assignment === "adventure" ? { level: s.helper.level } : undefined;
-    s.currentScript = generateAdventureScript(party, s.day, { seed, helper: helperOpts }, makeRng(seed));
+    // Weather (spec V2.9, issue #94): rolled once at rollover, read here
+    // into the threat multiplier only (rain/fog — see Weather.ts).
+    s.currentScript = generateAdventureScript(
+      party,
+      s.day,
+      { seed, helper: helperOpts, weather: s.weather },
+      makeRng(seed),
+    );
   }
 
   /** Full-wipe beat (spec V2.7, issue #83): reads the `helperCarry` events
@@ -284,6 +315,22 @@ export class GameEngine {
 
   private onNewDay(): void {
     const s = this.state;
+    // Weather (spec V2.9, issue #94): rolled ONCE, right here, and stored —
+    // every downstream reader (Combat.ts's threat calc, formAfternoonParty's
+    // storm gate, updateMerchant's storm bonus) reads state only from this
+    // point on. Faucet guard (rollWeather itself): two storms never land
+    // back to back.
+    const nextWeather = rollWeather(s.weather);
+    s.weatherStreak = nextWeatherStreak(nextWeather, s.weather, s.weatherStreak);
+    s.weather = nextWeather;
+
+    // Competitor gold recycling (spec V2.9, issue #94): every till's
+    // balance splits across the poorest half of the (alive) town —
+    // deterministic, ledger-invisible ("the town spends its money in
+    // town"). A no-op loop while every till is still 0 (no competitor
+    // sales yet).
+    recycleCompetitorGold(s);
+
     // Hired-staff payroll (spec V2.9, issue #91): each staffer's cut of
     // YESTERDAY's closing revenue, deducted and logged against that same
     // ledger entry right before it rotates into history — a no-op loop
@@ -643,10 +690,41 @@ export class GameEngine {
           timestamp: s.timeOfDay,
           day: s.day,
         });
+        // Storm faucet guard (spec V2.9, issue #94): storm days block the
+        // wilderness faucet entirely (no party forms), so the merchant
+        // brings a gold bonus instead — buys one loot/material item off a
+        // random adventurer at base value. Fires exactly once per storm
+        // day, same "day just rolled" gate as the stock roll above.
+        if (s.weather === "storm") this.applyStormMerchantBonus();
       }
     } else if (s.merchant) {
       s.merchant = null; // cart moves on when afternoon ends
     }
+  }
+
+  /** The storm-day gold injection above — its own method so `updateMerchant`
+   *  stays readable. Picks a random ALIVE adventurer holding a loot/material
+   *  item (Math.random is fine: WHICH adventurer sells is liveliness, not a
+   *  §6 verdict), removes one such item, credits them its baseValue in
+   *  gold. A no-op (silently) if nobody's holding one — same "when eligible"
+   *  shape as the day-rollover charity donation. */
+  private applyStormMerchantBonus(): void {
+    const s = this.state;
+    const candidates = s.adventurers.filter((a) => a.alive && a.inventory.some((it) => it.category === "loot"));
+    if (candidates.length === 0) return;
+    const seller = candidates[Math.floor(Math.random() * candidates.length)];
+    const idx = seller.inventory.findIndex((it) => it.category === "loot");
+    const [item] = seller.inventory.splice(idx, 1);
+    seller.gold += item.baseValue;
+    this.pushMessage({
+      id: `sys-storm-merchant-${s.day}`,
+      senderId: "system",
+      senderName: "Town",
+      type: "system",
+      content: `Storm's got everyone indoors, but the wholesale merchant bought ${seller.name}'s ${item.name} for ${item.baseValue}g anyway — gold has to move somehow.`,
+      timestamp: s.timeOfDay,
+      day: s.day,
+    });
   }
 
   /** Failure condition (§5): no gold, nothing to sell, nothing in stock. */
@@ -855,9 +933,13 @@ function createInitialState(): GameState {
     reputation: 0,
     buildings: defaultBuildings(),
     currentScript: null,
+    nightScript: null,
     helper: null,
     shopkeeperAppearance: null,
     staff: [],
+    competitors: defaultCompetitors(),
+    weather: "clear",
+    weatherStreak: 1,
     tokenBudget: {
       ...loadBudget(),
       dailyLimitCalls: DEFAULT_DAILY_LIMIT_CALLS,
