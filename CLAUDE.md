@@ -49,18 +49,10 @@ Use agents freely — announce what you're spinning up before launching. For cod
 
 ## Issue monitoring (both devs)
 
-Each dev's Claude agent should set up automated issue monitoring on session start. This keeps work flowing without waiting for someone to manually check GitHub.
+**Standing policy (set by Mr. G, 2026-08-17; see issue #107):** task assignments must reach each dev's agent **within ~2 minutes, 24/7**. Three layers — no single one suffices:
 
-**Setup:** Ask your Claude to run `/schedule` and create a recurring agent that:
-1. Runs hourly during work hours (the routines API enforces a 1-hour minimum interval — `*/30` is rejected)
-2. Checks `gh issue list --assignee <your-github-username> --state open --json number,title,labels`
-3. Sends a PushNotification when new issues appear
-4. Optionally begins planning/implementation on new issues in your domain
-
-**Dev A (Mr. G / chef-rell):** monitors issues in `src/game/`, `src/entities/`, `src/utils/`
-**Dev B (Basmine / OverlookBoz):** monitors issues in `src/rendering/`, `src/views/`, `src/ui/`, `src/audio/`
-
-Alternatively, start a persistent Monitor in any session:
+1. **Event-driven (always-on):** a GitHub Action on `issues: [assigned]` / `pull_request: [review_requested]` POSTs to the assignee's webhook endpoint (endpoint URLs live in repo Actions secrets — never in the workflow file; the repo is public).
+2. **Persistent local Monitor (whenever a session is open):** poll every 120s:
 ```bash
 # Poll for new issues assigned to you
 last=""; while true; do
@@ -69,6 +61,10 @@ last=""; while true; do
   last="$cur"; sleep 120
 done
 ```
+3. **Backstop cloud routine:** hourly, 24/7 (the routines API enforces a 1-hour minimum interval — `*/30` is rejected), checking `gh issue list --assignee <your-github-username> --state open` + review-requested PRs, with a mobile push on anything new.
+
+**Dev A (Mr. G / chef-rell):** monitors issues in `src/game/`, `src/entities/`, `src/utils/`
+**Dev B (Basmine / OverlookBoz):** monitors issues in `src/rendering/`, `src/views/`, `src/ui/`, `src/audio/`
 
 ## Deployment
 
