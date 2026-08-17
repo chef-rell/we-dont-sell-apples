@@ -659,18 +659,6 @@ describe("party formation (#76)", () => {
 });
 
 describe("wipe stabilizer (#76, spec V2.6)", () => {
-  /** A weak-but-willing adventurer: full (small) hp so fallbackMorningPlan
-   *  doesn't send them to rest, zero gold so it doesn't send them shopping,
-   *  bare level/gear so combat math is unfavorable. */
-  function makeFragile(a: Adventurer): void {
-    forceAdventurePlan(a);
-    a.maxHp = 3;
-    a.hp = 3;
-    a.level = 1;
-    a.equipment = {};
-    a.personality.riskTolerance = 90; // keeps restlessness clearing the "adventure" bar even after a day off
-  }
-
   it("a same-day multi-death wipe spawns more than one newcomer in a single wave", () => {
     // Deterministic: drive the death bookkeeping through the engine's real
     // handleOutcome path instead of hoping a 20-day unseeded sim happens to
@@ -706,54 +694,48 @@ describe("wipe stabilizer (#76, spec V2.6)", () => {
   });
 
   it("more deaths in a wave pull the next replacement in sooner than a lone death would", () => {
-    const singleDeath = new GameEngine(false);
-    singleDeath.state.aiMode = "off";
-    const soleVictim = singleDeath.state.adventurers[0];
-    makeFragile(soleVictim);
-    for (const a of singleDeath.state.adventurers.slice(1)) {
-      a.hp = a.maxHp; // keep everyone else safely out of danger
-      a.daysSinceLastAdventure = 0;
-      a.gold = 999; // stays shopping, never joins the party
-    }
-    let singleDeathDay = -1;
-    for (let i = 0; i < 6000 * 15 && singleDeathDay === -1; i++) {
-      singleDeath.tick(100);
-      if (!soleVictim.alive) singleDeathDay = singleDeath.state.day;
-    }
-    expect(singleDeathDay).toBeGreaterThan(0);
+    // Deterministic (the old form ran two 15-20 day unseeded sims and
+    // flaked): book deaths through the real handleOutcome path with the
+    // scheduling roll pinned to its worst case, then compare the exact
+    // replacementDueDay the accel math produces.
+    const fakeDeath = (e: GameEngine, a: Adventurer) => {
+      a.alive = false;
+      a.state = "dead";
+      e["handleOutcome"](a, {
+        adventurerId: a.id,
+        day: e.state.day,
+        area: "forest_edge",
+        monsterName: "Goblin",
+        monsterDefeated: false,
+        damageTaken: 99,
+        survived: false,
+        lootItemKeys: [],
+        lootRolls: [],
+        goldFound: 0,
+        brokenItems: [],
+        narration: null,
+      });
+    };
+    const rng = vi.spyOn(Math, "random").mockReturnValue(0.99);
+    try {
+      const single = new GameEngine(false);
+      single.state.aiMode = "off";
+      fakeDeath(single, single.state.adventurers[0]);
+      const singleDue = single["replacementDueDay"]!;
 
-    const wipe = new GameEngine(false);
-    wipe.state.aiMode = "off";
-    for (const a of wipe.state.adventurers) makeFragile(a);
-    let wipeDay = -1;
-    let sawMultiDeath = false;
-    let deadCountAtStart = wipe.state.adventurers.filter((a) => !a.alive).length;
-    for (let i = 0; i < 6000 * 20 && !sawMultiDeath; i++) {
-      wipe.tick(100);
-      const deadNow = wipe.state.adventurers.filter((a) => !a.alive).length;
-      // A meaningful wipe event: 3+ deaths accumulated without a
-      // replacement wave landing in between (a hard week, not just attrition).
-      if (deadNow - deadCountAtStart >= 3) {
-        wipeDay = wipe.state.day;
-        sawMultiDeath = true;
-      }
-    }
-    expect(sawMultiDeath).toBe(true);
+      const wipe = new GameEngine(false);
+      wipe.state.aiMode = "off";
+      for (const a of wipe.state.adventurers.slice(0, 3)) fakeDeath(wipe, a);
+      const wipeDue = wipe["replacementDueDay"]!;
 
-    // From each death day, count days until the FIRST replacement arrives.
-    let daysToFirstArrivalSingle = -1;
-    for (let d = 1; d <= 10 && daysToFirstArrivalSingle === -1; d++) {
-      for (let i = 0; i < 6000 && singleDeath.state.adventurers.length === 6; i++) singleDeath.tick(100);
-      if (singleDeath.state.adventurers.length > 6) daysToFirstArrivalSingle = singleDeath.state.day - singleDeathDay;
+      // MIN=2/MAX=3, roll pinned high: lone death schedules day+3; the
+      // third death's accel pulls the wave to day+2 — strictly sooner.
+      expect(singleDue).toBe(single.state.day + 3);
+      expect(wipeDue).toBe(wipe.state.day + 2);
+      expect(wipeDue).toBeLessThan(singleDue);
+    } finally {
+      rng.mockRestore();
     }
-    let daysToFirstArrivalWipe = -1;
-    for (let d = 1; d <= 10 && daysToFirstArrivalWipe === -1; d++) {
-      for (let i = 0; i < 6000 && wipe.state.adventurers.length === 6; i++) wipe.tick(100);
-      if (wipe.state.adventurers.length > 6) daysToFirstArrivalWipe = wipe.state.day - wipeDay;
-    }
-    expect(daysToFirstArrivalWipe).toBeGreaterThanOrEqual(0);
-    expect(daysToFirstArrivalSingle).toBeGreaterThanOrEqual(0);
-    expect(daysToFirstArrivalWipe).toBeLessThanOrEqual(daysToFirstArrivalSingle);
   });
 });
 
