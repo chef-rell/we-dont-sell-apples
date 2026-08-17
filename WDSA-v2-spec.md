@@ -249,14 +249,19 @@ mirroring v1's §22 practice.
   including temporary owner-sanctioned work inside Dev B domains — every such PR
   says so in its description.
 - **Carved packages ready for Dev B whenever available** (isolated, contract-fed,
-  no engine coupling):
+  no engine coupling). *Status as of the v2.0 RC (2026-08-17): packages 1–3 and
+  the first cut of 4–5 were built by Dev A on the availability basis above (PRs
+  #81, #74, #102). Dev B's remaining role on shipped packages is
+  ownership/review/polish passes (e.g. issue #104 for the audio pass); anything
+  unbuilt below stays available as-is.*
   1. Adventure strip renderer — consumes `AdventureScript` only; the design notes
-     already call it "own rendering system". The ideal first package.
-  2. Iso building draw functions (V2.4 rules make these parallelizable).
-  3. Weather layer (time column + town overlay).
+     already call it "own rendering system". The ideal first package. *(shipped, PR #81)*
+  2. Iso building draw functions (V2.4 rules make these parallelizable). *(shipped, PR #74)*
+  3. Weather layer (time column + town overlay). *(shipped, PR #102)*
   4. Audio pass — tavern/combat/weather ambience (Tone.js, optional,
-     gesture-gated as always).
+     gesture-gated as always). *(first cut shipped in #102; Dev B polish pass = issue #104)*
   5. CharacterRenderer facings/animation, if picked up before Dev A needs it.
+     *(facings + walk animation shipped, PRs #66/#72; further animation open)*
 - `App.tsx` and `types/index.ts` remain the coordinate-early shared files; the
   Phase 2 layout rewrite of `App.tsx` gets announced before it starts.
 

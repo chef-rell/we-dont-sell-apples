@@ -52,7 +52,7 @@ Use agents freely — announce what you're spinning up before launching. For cod
 Each dev's Claude agent should set up automated issue monitoring on session start. This keeps work flowing without waiting for someone to manually check GitHub.
 
 **Setup:** Ask your Claude to run `/schedule` and create a recurring agent that:
-1. Runs every 30 minutes during work hours
+1. Runs hourly during work hours (the routines API enforces a 1-hour minimum interval — `*/30` is rejected)
 2. Checks `gh issue list --assignee <your-github-username> --state open --json number,title,labels`
 3. Sends a PushNotification when new issues appear
 4. Optionally begins planning/implementation on new issues in your domain
