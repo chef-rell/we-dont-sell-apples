@@ -16,13 +16,20 @@ type Tone = typeof import("tone");
 
 const MUTE_KEY = "wdsa_muted_v1";
 const DEFAULT_VOLUME = 0.3; // spec §9: start at 30%
+/** Level for an effect that declares no gain of its own. */
+const DEFAULT_SFX_GAIN = 0.4;
+/** Bed crossfade, seconds. Long enough to hide the seam, short enough that a
+ *  weather change still reads as a change. */
+const BED_FADE = 0.8;
 
 class SoundManager {
   private tone: Tone | null = null;
   private starting: Promise<void> | null = null;
   private voices: Partial<Record<Voice, { triggerAttackRelease: (...args: unknown[]) => void }>> = {};
-  private ambience: { kind: AmbienceKind; loop: { dispose: () => void }; drone: { dispose: () => void } } | null =
-    null;
+  /** One gain node per voice, sitting between the voice and the destination,
+   *  so `SfxDef.gain` becomes an actual level instead of a dead field. */
+  private trims: Partial<Record<Voice, { gain: { rampTo: (value: number, time: number) => void } }>> = {};
+  private ambience: { kind: AmbienceKind; fadeOut: (seconds: number) => void } | null = null;
   private muted = readMuted();
   private volume = DEFAULT_VOLUME;
   private pendingAmbience: AmbienceKind | null = null;
@@ -89,6 +96,12 @@ class SoundManager {
     const def = SFX[name];
     const voice = this.voices[def.voice];
     if (!voice) return;
+    // Each effect's own level (SfxDef.gain) rides on a per-effect gain node
+    // rather than the voice itself: voices are shared between effects, so
+    // setting the level on the voice would retune whatever is still ringing
+    // (the coin's tail would jump when an "angry" wood hit followed it).
+    const trim = this.trims[def.voice];
+    if (trim) trim.gain.rampTo(def.gain ?? DEFAULT_SFX_GAIN, 0.005);
     const now = tone.now();
     def.notes.forEach((note, i) => {
       const at = now + i * (def.gap ?? 0);
@@ -101,25 +114,38 @@ class SoundManager {
     });
   }
 
-  /** Swap the ambient bed. Remembers the request if audio isn't up yet. */
+  /** Swap the ambient bed. Remembers the request if audio isn't up yet.
+   *
+   *  Beds crossfade rather than cut. The old bed used to be disposed the
+   *  instant a new one was asked for, which chopped whatever pad note was
+   *  sounding mid-envelope — audible as a click every time the weather or
+   *  the phase changed, and those changes are exactly when the player is
+   *  most likely to be listening. Now the outgoing bed rides its own gain
+   *  node down over BED_FADE and is disposed after it lands silent, while
+   *  the incoming one fades up over the same window. */
   setAmbience(kind: AmbienceKind): void {
     this.pendingAmbience = kind;
     const tone = this.tone;
     if (!tone || this.muted) return;
     if (this.ambience?.kind === kind) return;
-    this.stopAmbience();
+    this.fadeOutAmbience(BED_FADE);
 
     const bed = AMBIENCE[kind];
+    // The bed's own fader. Starts silent and comes up, so a bed that arrives
+    // mid-drone-attack doesn't punch in at full level.
+    const fade = new tone.Gain(0).toDestination();
+    fade.gain.rampTo(1, BED_FADE);
+
     const pad = new tone.PolySynth(tone.Synth, {
       oscillator: { type: "triangle" },
       envelope: { attack: 0.6, decay: 0.4, sustain: 0.2, release: 1.6 },
-    }).toDestination();
+    }).connect(fade);
     pad.volume.value = tone.gainToDb(bed.gain);
 
     const drone = new tone.Synth({
       oscillator: { type: "sine" },
       envelope: { attack: 2, decay: 0, sustain: 1, release: 3 },
-    }).toDestination();
+    }).connect(fade);
     drone.volume.value = tone.gainToDb(bed.gain * 0.7);
     drone.triggerAttack(bed.drone);
 
@@ -136,15 +162,33 @@ class SoundManager {
     tone.getTransport().start();
     this.ambience = {
       kind,
-      loop: { dispose: () => { loop.dispose(); pad.dispose(); } },
-      drone: { dispose: () => { drone.triggerRelease(); setTimeout(() => drone.dispose(), 3000); } },
+      fadeOut: (seconds: number) => {
+        // Stop scheduling new notes immediately, let the sounding ones ride
+        // the fader down, then tear the whole chain down together.
+        loop.stop().dispose();
+        drone.triggerRelease();
+        fade.gain.rampTo(0, seconds);
+        setTimeout(
+          () => {
+            pad.dispose();
+            drone.dispose();
+            fade.dispose();
+          },
+          seconds * 1000 + 200,
+        );
+      },
     };
   }
 
-  stopAmbience(): void {
-    this.ambience?.loop.dispose();
-    this.ambience?.drone.dispose();
+  /** Fade the current bed out and forget it. `seconds` of 0 still gets a very
+   *  short ramp — a true instant cut is what produced the click. */
+  private fadeOutAmbience(seconds: number): void {
+    this.ambience?.fadeOut(Math.max(0.05, seconds));
     this.ambience = null;
+  }
+
+  stopAmbience(): void {
+    this.fadeOutAmbience(BED_FADE);
   }
 
   private applyVolume(): void {
@@ -155,26 +199,50 @@ class SoundManager {
   }
 
   private buildVoices(tone: Tone): void {
-    this.voices.metal = new tone.MetalSynth({
-      envelope: { attack: 0.001, decay: 0.12, release: 0.02 },
-      harmonicity: 6,
-      resonance: 3000,
-    }).toDestination() as never;
-    this.voices.wood = new tone.MembraneSynth({
-      envelope: { attack: 0.002, decay: 0.22, sustain: 0, release: 0.2 },
-    }).toDestination() as never;
-    this.voices.bell = new tone.PolySynth(tone.FMSynth, {
-      envelope: { attack: 0.005, decay: 0.25, sustain: 0, release: 0.4 },
-      modulationIndex: 8,
-    }).toDestination() as never;
-    this.voices.pad = new tone.PolySynth(tone.Synth, {
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.15, decay: 0.3, sustain: 0.3, release: 1.2 },
-    }).toDestination() as never;
-    this.voices.noise = new tone.NoiseSynth({
-      noise: { type: "brown" },
-      envelope: { attack: 0.001, decay: 0.09, sustain: 0 },
-    }).toDestination() as never;
+    // Each voice runs through its own trim gain; play() sets that trim from
+    // the effect's declared level just before triggering.
+    const trimmed = (voice: { connect: (node: never) => void }, name: Voice) => {
+      const trim = new tone.Gain(DEFAULT_SFX_GAIN).toDestination();
+      voice.connect(trim as never);
+      this.trims[name] = trim as never;
+      return voice as never;
+    };
+
+    this.voices.metal = trimmed(
+      new tone.MetalSynth({
+        envelope: { attack: 0.001, decay: 0.12, release: 0.02 },
+        harmonicity: 6,
+        resonance: 3000,
+      }),
+      "metal",
+    );
+    this.voices.wood = trimmed(
+      new tone.MembraneSynth({
+        envelope: { attack: 0.002, decay: 0.22, sustain: 0, release: 0.2 },
+      }),
+      "wood",
+    );
+    this.voices.bell = trimmed(
+      new tone.PolySynth(tone.FMSynth, {
+        envelope: { attack: 0.005, decay: 0.25, sustain: 0, release: 0.4 },
+        modulationIndex: 8,
+      }),
+      "bell",
+    );
+    this.voices.pad = trimmed(
+      new tone.PolySynth(tone.Synth, {
+        oscillator: { type: "triangle" },
+        envelope: { attack: 0.15, decay: 0.3, sustain: 0.3, release: 1.2 },
+      }),
+      "pad",
+    );
+    this.voices.noise = trimmed(
+      new tone.NoiseSynth({
+        noise: { type: "brown" },
+        envelope: { attack: 0.001, decay: 0.09, sustain: 0 },
+      }),
+      "noise",
+    );
   }
 }
 
