@@ -49,10 +49,8 @@ Use agents freely — announce what you're spinning up before launching. For cod
 
 ## Issue monitoring (both devs)
 
-**Standing policy (set by Mr. G, 2026-08-17; see issue #107):** task assignments must reach each dev's agent **within ~2 minutes, 24/7**. Three layers — no single one suffices:
+**Policy (relaxed by Mr. G, 2026-08-22; supersedes the #107 24/7 mandate):** check assigned issues at session start (checklist step 3), and keep a local Monitor running for the lifetime of any open session — poll every 120s:
 
-1. **Event-driven (always-on):** a GitHub Action on `issues: [assigned]` / `pull_request: [review_requested]` POSTs to the assignee's webhook endpoint (endpoint URLs live in repo Actions secrets — never in the workflow file; the repo is public).
-2. **Persistent local Monitor (whenever a session is open):** poll every 120s:
 ```bash
 # Poll for new issues assigned to you
 last=""; while true; do
@@ -61,7 +59,8 @@ last=""; while true; do
   last="$cur"; sleep 120
 done
 ```
-3. **Backstop cloud routine:** hourly, 24/7 (the routines API enforces a 1-hour minimum interval — `*/30` is rejected), checking `gh issue list --assignee <your-github-username> --state open` + review-requested PRs, with a mobile push on anything new.
+
+No 24/7 coverage, cloud routines, or event-driven webhooks are required. Off-session pickup happens at the next session start.
 
 **Dev A (Mr. G / chef-rell):** monitors issues in `src/game/`, `src/entities/`, `src/utils/`
 **Dev B (Basmine / OverlookBoz):** monitors issues in `src/rendering/`, `src/views/`, `src/ui/`, `src/audio/`
